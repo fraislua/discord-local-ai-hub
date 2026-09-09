@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Discord;
@@ -16,9 +17,8 @@ namespace DiscordAIBot
         private readonly StreamResponseHandler _streamResponseHandler;
         private readonly GoogleDriveUploader _driveUploader;
 
-        // 長文(Discordで複数ブロックに分割される長さ)の応答をGoogle Driveにも保存する閾値。
-        // StreamResponseHandlerの分割閾値と揃える
-        private const int DriveUploadThresholdChars = StreamResponseHandler.MaxDiscordMessageLength;
+        // スレッド(セッション)ごとの会話記録を保存するGoogle Drive上のフォルダ名
+        private const string DriveFolderName = "Discord-AIChatbot";
 
         public ChatOrchestrator(
             Func<ApiProvider, IAiProvider> providerFactory,
@@ -41,6 +41,10 @@ namespace DiscordAIBot
             EffortLevel effort,
             CancellationToken cancellationToken)
         {
+            // スレッド(セッション)ごとにGoogle Driveの会話記録ファイルを用意し、
+            // 初回のみリンクをピン留めする(失敗してもチャット自体は継続する)
+            await EnsureThreadDriveFileAsync(threadId, statusMessage, cancellationToken);
+
             int currentBaseTokens = TokenManager.CountTokens(systemPrompt) + TokenManager.CountTokens(userMessage.Content);
             int availableTokensForAttachments = modelMeta.ContextWindow - 2000 - currentBaseTokens;
             if (availableTokensForAttachments < 0) availableTokensForAttachments = 0;
@@ -142,24 +146,89 @@ namespace DiscordAIBot
                 }
             }
 
-            // Discordで複数ブロックに分割されるような長文は、コピーしやすいようGoogle Driveにも保存する
-            if (streamResult.RawText.Length > DriveUploadThresholdChars)
-            {
-                try
-                {
-                    string fileName = $"discord-ai-hub_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{threadId}.md";
-                    string? driveLink = await _driveUploader.UploadTextFileAsync(fileName, streamResult.RawText, cancellationToken);
+            // 今回のやり取りを反映してGoogle Drive上の会話記録を更新する
+            await UpdateThreadDriveFileAsync(threadId, cancellationToken);
+        }
 
-                    if (driveLink != null)
-                    {
-                        await statusMessage.Channel.SendMessageAsync($"📄 長文のためGoogle Driveにも保存しました: {driveLink}");
-                    }
-                }
-                catch (Exception ex)
+        // スレッドのGoogle Drive記録ファイルが未作成なら作成し、リンクをピン留めする。
+        // 既に作成済み(DBにレコードあり)なら何もしない
+        private async Task EnsureThreadDriveFileAsync(ulong threadId, IUserMessage statusMessage, CancellationToken cancellationToken)
+        {
+            using var db = new ChatDbContext();
+            bool exists = await db.ThreadDriveFiles.AnyAsync(t => t.ThreadId == threadId, cancellationToken);
+            if (exists) return;
+
+            try
+            {
+                string threadTitle = statusMessage.Channel is SocketThreadChannel threadChannel
+                    ? threadChannel.Name
+                    : $"thread-{threadId}";
+
+                string folderId = await _driveUploader.GetOrCreateFolderAsync(DriveFolderName, cancellationToken);
+
+                string initialContent = $"# {threadTitle}\n\n(会話開始: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC)\n";
+                var (fileId, webViewLink) = await _driveUploader.CreateFileInFolderAsync(
+                    $"{threadTitle} ({threadId}).md", initialContent, folderId, cancellationToken);
+
+                db.ThreadDriveFiles.Add(new ThreadDriveFile
                 {
-                    Console.WriteLine($"[Warning] Google Driveへの保存に失敗しました: {ex.Message}");
-                }
+                    ThreadId = threadId,
+                    DriveFileId = fileId,
+                    DriveFileLink = webViewLink,
+                    CreatedAt = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync(cancellationToken);
+
+                var pinnedMsg = await statusMessage.Channel.SendMessageAsync($"📄 このスレッドの記録: {webViewLink}");
+                await pinnedMsg.PinAsync();
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Warning] Google Driveスレッドファイルの作成に失敗しました: {ex.Message}");
+                // 失敗時はDBにレコードを残さず、次回のメッセージで再試行する
+            }
+        }
+
+        // スレッドのGoogle Drive記録ファイルを、DB内の全会話履歴で丸ごと上書きする
+        private async Task UpdateThreadDriveFileAsync(ulong threadId, CancellationToken cancellationToken)
+        {
+            using var db = new ChatDbContext();
+            var driveFile = await db.ThreadDriveFiles.FirstOrDefaultAsync(t => t.ThreadId == threadId, cancellationToken);
+            if (driveFile == null) return; // 作成に失敗している場合はスキップ
+
+            try
+            {
+                string transcript = await BuildTranscriptAsync(threadId, cancellationToken);
+                await _driveUploader.UpdateFileContentAsync(driveFile.DriveFileId, transcript, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Warning] Google Driveスレッドファイルの更新に失敗しました: {ex.Message}");
+            }
+        }
+
+        private async Task<string> BuildTranscriptAsync(ulong threadId, CancellationToken cancellationToken)
+        {
+            using var db = new ChatDbContext();
+            var messages = await db.Messages
+                .Where(m => m.ThreadId == threadId)
+                .OrderBy(m => m.Id)
+                .ToListAsync(cancellationToken);
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"# Discord AI Chat Log (Thread ID: {threadId})");
+            sb.AppendLine();
+
+            foreach (var msg in messages)
+            {
+                string roleLabel = msg.Role == "user" ? "User" : "AI";
+                sb.AppendLine($"## {roleLabel} ({msg.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC)");
+                sb.AppendLine();
+                sb.AppendLine(msg.Content);
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
         }
 
         private async Task<IReadOnlyList<ChatTurn>> GetAndTrimHistoryAsync(

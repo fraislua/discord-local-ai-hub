@@ -99,6 +99,13 @@ namespace DiscordAIBot
                         ReasoningTokens INTEGER NOT NULL,
                         EstimatedCostUsd REAL NOT NULL
                     );");
+                await db.Database.ExecuteSqlRawAsync(@"
+                    CREATE TABLE IF NOT EXISTS ThreadDriveFiles (
+                        ThreadId INTEGER NOT NULL PRIMARY KEY,
+                        DriveFileId TEXT NOT NULL,
+                        DriveFileLink TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL
+                    );");
             }
             await TokenManager.InitializeAsync();
 

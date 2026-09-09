@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordAIBot
@@ -25,10 +26,21 @@ namespace DiscordAIBot
         public double EstimatedCostUsd { get; set; }
     }
 
+    // スレッド(セッション)ごとに紐づくGoogle Drive上の会話記録ファイル
+    public class ThreadDriveFile
+    {
+        [Key]
+        public ulong ThreadId { get; set; }
+        public string DriveFileId { get; set; } = string.Empty;
+        public string DriveFileLink { get; set; } = string.Empty;
+        public DateTime CreatedAt { get; set; }
+    }
+
     public class ChatDbContext : DbContext
     {
         public DbSet<ChatMessage> Messages { get; set; } = null!;
         public DbSet<UsageRecord> UsageRecords { get; set; } = null!;
+        public DbSet<ThreadDriveFile> ThreadDriveFiles { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
