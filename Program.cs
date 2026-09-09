@@ -7,6 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Discord;
 using Discord.WebSocket;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
@@ -29,6 +32,7 @@ namespace DiscordAIBot
         private string _vertexProjectId = string.Empty;
         private string _vertexRegion = string.Empty;
         private string _openAiApiKey = string.Empty;
+        private string _mcpListenUrl = string.Empty;
 
         private ulong _chatAiChannelId;
         private bool _usageTopicUpdaterStarted = false;
@@ -77,6 +81,7 @@ namespace DiscordAIBot
                 _vertexProjectId = config["BotSettings:VertexProjectId"] ?? throw new Exception("VertexProjectIdが設定されていません。");
                 _vertexRegion = config["BotSettings:VertexRegion"] ?? throw new Exception("VertexRegionが設定されていません。");
                 _openAiApiKey = config["BotSettings:OpenAiApiKey"] ?? throw new Exception("OpenAiApiKeyが設定されていません。");
+                _mcpListenUrl = config["BotSettings:McpListenUrl"] ?? throw new Exception("McpListenUrlが設定されていません。");
 
                 if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId))
                 {
@@ -156,7 +161,16 @@ namespace DiscordAIBot
             await _client.LoginAsync(TokenType.Bot, _discordToken);
             await _client.StartAsync();
 
-            await Task.Delay(-1);
+            // MCPサーバー機能(Step 1: 疎通確認・RAM実測用のKestrel導入のみ、ツール未実装)。
+            // McpListenUrlはTailscale IPのみを指す想定(例: http://100.x.x.x:5100)。
+            // 0.0.0.0で待ち受けるとLAN内からもアクセス可能になるため、appsettings.json側で
+            // Tailscale IP限定のURLを設定する運用とする
+            var webBuilder = WebApplication.CreateBuilder();
+            webBuilder.WebHost.UseUrls(_mcpListenUrl);
+            var webApp = webBuilder.Build();
+            webApp.MapGet("/health", () => Results.Ok("ok"));
+
+            await webApp.RunAsync();
         }
 
         private Task LogAsync(LogMessage log)
