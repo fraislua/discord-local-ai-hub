@@ -119,6 +119,7 @@ namespace DiscordAIBot
                 base64Images.Count,
                 initialContextTokens,
                 threadId,
+                effort,
                 cancellationToken);
 
             await SaveAiMessageAsync(threadId, streamResult.RawText);

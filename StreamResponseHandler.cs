@@ -22,6 +22,7 @@ namespace DiscordAIBot
             int imageCount,
             int initialContextTokens,
             ulong contextId, // 追加: 呼び出し元のコンテキストID
+            EffortLevel effort,
             CancellationToken cancellationToken)
         {
             var rawTextBuffer = new StringBuilder();      
@@ -158,7 +159,9 @@ namespace DiscordAIBot
             double tokensPerSec = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
             int totalContextTokens = initialContextTokens + outputTokens; 
             
-            string footer = $"\n\n`Model: {modelMeta.ModelId}` | `📊 {tokensPerSec:F1} t/s` | `[Context: {totalContextTokens} / {modelMeta.ContextWindow}]` | `🖼️ Images: {imageCount}` | `Reason: {lastFinishReason}` | `History: {historyCount}`";
+            // エフォートはクラウドモデルのみ意味を持つ(ローカルモデルは無視されるため表示しない)
+            string effortSegment = modelMeta.Provider != ApiProvider.LmStudio ? $" | `Effort: {effort}`" : "";
+            string footer = $"\n\n`Model: {modelMeta.ModelId}`{effortSegment} | `📊 {tokensPerSec:F1} t/s` | `[Context: {totalContextTokens} / {modelMeta.ContextWindow}]` | `🖼️ Images: {imageCount}` | `Reason: {lastFinishReason}` | `History: {historyCount}`";
             
             displayTextBuffer.Append(footer);
 
