@@ -2,10 +2,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 namespace DiscordAIBot
@@ -96,6 +98,7 @@ namespace DiscordAIBot
             [Description("短期セッションID(任意の文字列)。同じIDを指定して続けて呼ぶと会話が継続する。省略時は毎回独立したリクエスト")] string? session_id,
             [Description("思考の深さ。省略時はMedium。選択肢: None, Low, Medium, High, XHigh(モデルが非対応の場合は自動調整される)")] string? effort,
             [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルではAPI仕様上デフォルト値のみ受理されるため無視される")] double? temperature,
+            IProgress<ProgressNotificationValue> progress,
             CancellationToken cancellationToken)
         {
             string modelId = string.IsNullOrWhiteSpace(model) ? ModelRegistry.DefaultModelId : model;
@@ -161,6 +164,15 @@ namespace DiscordAIBot
             int? completionTokens = null;
             int? reasoningTokens = null;
 
+            // クライアントがprogressTokenを送っていない場合、MCP SDKはNullProgressを注入する
+            // ため、常時Report()を呼んでも安全(その場合は単に無視される)。長時間かかる
+            // クラウド呼び出し(High/XHigh effort等)でMCPクライアント側のタイムアウトを
+            // 回避する狙いで、経過時間ベースで一定間隔ごとに進捗を通知する
+            const int ProgressIntervalMs = 3000;
+            var overallStopwatch = Stopwatch.StartNew();
+            long lastProgressReportMs = 0;
+            progress.Report(new ProgressNotificationValue { Progress = 0, Message = "モデル呼び出しを開始しました" });
+
             await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
             {
                 if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
@@ -171,6 +183,17 @@ namespace DiscordAIBot
                 if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens;
                 if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens;
                 if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
+
+                if (overallStopwatch.ElapsedMilliseconds - lastProgressReportMs >= ProgressIntervalMs)
+                {
+                    lastProgressReportMs = overallStopwatch.ElapsedMilliseconds;
+                    int elapsedSeconds = (int)overallStopwatch.Elapsed.TotalSeconds;
+                    progress.Report(new ProgressNotificationValue
+                    {
+                        Progress = elapsedSeconds,
+                        Message = $"応答生成中...(経過{elapsedSeconds}秒、{responseText.Length}文字受信済み)"
+                    });
+                }
             }
 
             string answer = responseText.ToString();

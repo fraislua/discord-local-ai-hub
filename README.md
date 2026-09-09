@@ -121,10 +121,18 @@ claude mcp add --transport http discord-ai-hub http://<TailscaleのIP>:5100/mcp
 
 | ツール | 内容 |
 |---|---|
-| `ask(prompt, model?)` | 単発の質問・軽いコード生成をAIモデルに投げ、応答テキストを1回だけ返す。会話履歴は保持されない（呼び出しごとに独立したリクエスト）。`model`省略時はローカルの既定モデル、`/model`で選択可能なIDを指定すればクラウドモデルも使用可能 |
+| `ask(prompt, model?, session_id?, effort?, temperature?)` | 質問・軽いコード生成をAIモデルに投げ、応答テキストを返す。`session_id`省略時は毎回独立したリクエスト（履歴なし）、指定時はプロセスメモリ上の短期履歴（TTL20分）で会話を継続。`model`省略時はローカルの既定モデル、`/model`で選択可能なIDを指定すればクラウドモデルも使用可能。`effort`（思考の深さ）・`temperature`も指定可能。詳細な引数は[MCP_AGENT_GUIDE.md](./MCP_AGENT_GUIDE.md)を参照 |
 
 MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合も、Discord経由と同じ`UsageRecords`
 テーブル・同じコスト計算式・同じOpenAI日次無料枠の事前ブロックロジックを共有します（実装の二重化なし）。
+
+呼び出し中は、MCPプロトコルの[Progress notifications](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/progress)
+（`notifications/progress`）を約3秒間隔で送信します。クライアントが`tools/call`のリクエストに
+`progressToken`を含めた場合のみ実際に送信され（含めない場合は何も送られず、通常のツール呼び出しと
+変わらない）、多くのMCPクライアントはこれをタイムアウト延長のシグナルとして扱います。ローカルモデル
+（特に`effort: High`以上）は数十秒〜数分かかることがあり、この仕組みでクライアント側タイムアウトを
+回避します。実機検証では、ローカルQwen3.8-27B・`effort: High`で166秒かかった呼び出しでも、
+約3秒おきの進捗通知（経過秒数・受信済み文字数を含む）を挟みつつ最終応答まで正常完了することを確認済み。
 
 ### セキュリティ
 
