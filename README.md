@@ -126,6 +126,12 @@ claude mcp add --transport http discord-ai-hub http://<TailscaleのIP>:5100/mcp
 MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合も、Discord経由と同じ`UsageRecords`
 テーブル・同じコスト計算式・同じOpenAI日次無料枠の事前ブロックロジックを共有します（実装の二重化なし）。
 
+### 提供リソース
+
+| リソース | URI | 内容 |
+|---|---|---|
+| Available Models | `models://registry` | `ask`の`model`引数に指定できる全モデルの一覧をJSONで返す。`ModelRegistry.cs`から動的に生成されるため、モデル追加時もこのリソースが自動的に最新化される。コンテキスト長・画像対応可否・思考深さの対応段階に加え、コスト特性（`free` / `paid_shared_pool` / `free_within_daily_quota`）とデータ共有プログラムの有無（`dataSharingProgram`）を含む |
+
 呼び出し中は、MCPプロトコルの[Progress notifications](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/progress)
 （`notifications/progress`）を約3秒間隔で送信します。クライアントが`tools/call`のリクエストに
 `progressToken`を含めた場合のみ実際に送信され（含めない場合は何も送られず、通常のツール呼び出しと
@@ -162,6 +168,7 @@ MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合�
 | `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-5.6 Sol/Terra/Luna） |
 | `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
 | `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
+| `ModelRegistryResource.cs` | MCPサーバー機能の`models://registry`リソース。`ModelRegistry.cs`からモデル一覧・コスト特性を動的に生成しJSONで公開 |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |
 | `AttachmentProcessor.cs` | 添付ファイル・画像の処理。メモリ保護機構を内包 |
 | `TokenManager.cs` | トークナイザーによるトークン数カウント（シングルトン） |

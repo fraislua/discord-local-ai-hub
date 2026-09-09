@@ -197,7 +197,8 @@ namespace DiscordAIBot
             // のためセッションアフィニティは問題にならない)
             webBuilder.Services.AddMcpServer()
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.StatefulForInitializeClients)
-                .WithTools<AskTool>();
+                .WithTools<AskTool>()
+                .WithResources<ModelRegistryResource>();
 
             var webApp = webBuilder.Build();
             webApp.MapGet("/health", () => Results.Ok("ok"));
