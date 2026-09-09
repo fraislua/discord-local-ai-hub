@@ -108,6 +108,12 @@ namespace DiscordAIBot
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream);
 
+            // Grokのストリームは「finish_reasonを含むチャンク」と「usage(トークン内訳)を含む
+            // choices空のチャンク」が別々に届く。StreamResponseHandler側はFinishReasonが
+            // 非nullのチャンクを見た時点でストリーム読み取りを終了するため、finish_reasonは
+            // 一旦保留し、直後のusageチャンクとマージした1チャンクとしてyieldする
+            string? pendingFinishReason = null;
+
             while (true)
             {
                 string? line = await reader.ReadLineAsync(cancellationToken);
@@ -132,8 +138,35 @@ namespace DiscordAIBot
                 using (doc)
                 {
                     var root = doc.RootElement;
+
+                    int? promptTokens = null;
+                    int? completionTokens = null;
+                    int? reasoningTokens = null;
+                    if (root.TryGetProperty("usage", out var usageElement) && usageElement.ValueKind == JsonValueKind.Object)
+                    {
+                        if (usageElement.TryGetProperty("prompt_tokens", out var ptElement) && ptElement.ValueKind == JsonValueKind.Number)
+                        {
+                            promptTokens = ptElement.GetInt32();
+                        }
+                        if (usageElement.TryGetProperty("completion_tokens", out var ctElement) && ctElement.ValueKind == JsonValueKind.Number)
+                        {
+                            completionTokens = ctElement.GetInt32();
+                        }
+                        if (usageElement.TryGetProperty("completion_tokens_details", out var ctdElement) &&
+                            ctdElement.TryGetProperty("reasoning_tokens", out var rtElement) && rtElement.ValueKind == JsonValueKind.Number)
+                        {
+                            reasoningTokens = rtElement.GetInt32();
+                        }
+                    }
+
                     if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                     {
+                        // choices空のusage専用チャンク。保留中のfinishReasonがあればここで確定
+                        if (promptTokens.HasValue || completionTokens.HasValue || reasoningTokens.HasValue)
+                        {
+                            yield return new StreamChunk(null, false, pendingFinishReason ?? "stop", promptTokens, completionTokens, reasoningTokens);
+                            pendingFinishReason = null;
+                        }
                         continue;
                     }
 
@@ -152,13 +185,30 @@ namespace DiscordAIBot
                         textDelta = contentElement.GetString();
                     }
 
-                    if (string.IsNullOrEmpty(textDelta) && finishReason == null)
+                    if (finishReason != null)
+                    {
+                        // usageチャンクを待つため、finishReasonはまだ確定させない
+                        pendingFinishReason = finishReason;
+                        if (!string.IsNullOrEmpty(textDelta))
+                        {
+                            yield return new StreamChunk(textDelta, false, null);
+                        }
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(textDelta))
                     {
                         continue;
                     }
 
-                    yield return new StreamChunk(textDelta, false, finishReason);
+                    yield return new StreamChunk(textDelta, false, null);
                 }
+            }
+
+            // usageチャンクが届かないままストリームが終了した場合のフォールバック
+            if (pendingFinishReason != null)
+            {
+                yield return new StreamChunk(null, false, pendingFinishReason);
             }
         }
 

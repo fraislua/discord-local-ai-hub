@@ -14,7 +14,7 @@ namespace DiscordAIBot
         private readonly TimeSpan _updateInterval = TimeSpan.FromSeconds(1.5);
         private const int MaxDiscordMessageLength = 1950;
 
-        public async Task<string> HandleStreamAsync(
+        public async Task<StreamResult> HandleStreamAsync(
             IAsyncEnumerable<StreamChunk> stream,
             IUserMessage statusMessage,
             ModelMetadata modelMeta,
@@ -37,9 +37,13 @@ namespace DiscordAIBot
             int currentStartIndex = 0; 
             
             bool isFirstChunk = true;
-            bool isInlineReasoning = false; 
-            bool wasReasoning = false; 
+            bool isInlineReasoning = false;
+            bool wasReasoning = false;
             string lastFinishReason = "stop";
+
+            int? usagePromptTokens = null;
+            int? usageCompletionTokens = null;
+            int? usageReasoningTokens = null;
 
             try
             {
@@ -55,6 +59,13 @@ namespace DiscordAIBot
                     if (!string.IsNullOrEmpty(chunk.FinishReason))
                     {
                         lastFinishReason = chunk.FinishReason;
+                    }
+
+                    if (chunk.PromptTokens.HasValue || chunk.CompletionTokens.HasValue || chunk.ReasoningTokens.HasValue)
+                    {
+                        usagePromptTokens = chunk.PromptTokens;
+                        usageCompletionTokens = chunk.CompletionTokens;
+                        usageReasoningTokens = chunk.ReasoningTokens;
                     }
 
                     if (chunk.TextDelta != null)
@@ -162,7 +173,7 @@ namespace DiscordAIBot
             currentDiscordMsg = finalResult.Message;
             currentStartIndex = finalResult.NextIndex;
 
-            return rawTextBuffer.ToString();
+            return new StreamResult(rawTextBuffer.ToString(), usagePromptTokens, usageCompletionTokens, usageReasoningTokens);
         }
 
         private async Task<(IUserMessage Message, int NextIndex)> UpdateDiscordMessageAsync(

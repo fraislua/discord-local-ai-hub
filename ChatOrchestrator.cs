@@ -88,17 +88,36 @@ namespace DiscordAIBot
             var stream = aiProvider.StreamChatAsync(request, cancellationToken);
             
             // 修正箇所: threadId を contextId として引き渡す
-            string rawAiResponse = await _streamResponseHandler.HandleStreamAsync(
-                stream, 
-                statusMessage, 
-                modelMeta, 
-                history.Count, 
-                base64Images.Count, 
+            var streamResult = await _streamResponseHandler.HandleStreamAsync(
+                stream,
+                statusMessage,
+                modelMeta,
+                history.Count,
+                base64Images.Count,
                 initialContextTokens,
-                threadId, 
+                threadId,
                 cancellationToken);
 
-            await SaveAiMessageAsync(threadId, rawAiResponse);
+            await SaveAiMessageAsync(threadId, streamResult.RawText);
+
+            if (streamResult.PromptTokens.HasValue)
+            {
+                double? estimatedCost = CostEstimator.EstimateCostUsd(
+                    modelMeta.Provider,
+                    streamResult.PromptTokens.Value,
+                    streamResult.CompletionTokens ?? 0,
+                    streamResult.ReasoningTokens ?? 0);
+
+                if (estimatedCost.HasValue)
+                {
+                    await SaveUsageRecordAsync(
+                        modelMeta.ModelId,
+                        streamResult.PromptTokens.Value,
+                        streamResult.CompletionTokens ?? 0,
+                        streamResult.ReasoningTokens ?? 0,
+                        estimatedCost.Value);
+                }
+            }
         }
 
         private async Task<IReadOnlyList<ChatTurn>> GetAndTrimHistoryAsync(
@@ -164,6 +183,21 @@ namespace DiscordAIBot
                 Role = "assistant",
                 Content = aiText,
                 CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        private async Task SaveUsageRecordAsync(string modelId, int promptTokens, int completionTokens, int reasoningTokens, double estimatedCostUsd)
+        {
+            using var db = new ChatDbContext();
+            db.UsageRecords.Add(new UsageRecord
+            {
+                CreatedAt = DateTime.UtcNow,
+                ModelId = modelId,
+                PromptTokens = promptTokens,
+                CompletionTokens = completionTokens,
+                ReasoningTokens = reasoningTokens,
+                EstimatedCostUsd = estimatedCostUsd
             });
             await db.SaveChangesAsync();
         }

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Discord;
 using Discord.WebSocket;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
 namespace DiscordAIBot
@@ -27,6 +28,8 @@ namespace DiscordAIBot
         private string _vertexRegion = string.Empty;
 
         private ulong _chatAiChannelId;
+        private bool _usageTopicUpdaterStarted = false;
+        private double _lastDisplayedCostUsd = -1;
 
         static async Task Main(string[] args) => await new Program().MainAsync();
 
@@ -60,6 +63,17 @@ namespace DiscordAIBot
             using (var db = new ChatDbContext())
             {
                 await db.Database.EnsureCreatedAsync();
+                // EnsureCreatedAsyncは既存DBに新規テーブルを追加しないため、明示的に作成
+                await db.Database.ExecuteSqlRawAsync(@"
+                    CREATE TABLE IF NOT EXISTS UsageRecords (
+                        Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        CreatedAt TEXT NOT NULL,
+                        ModelId TEXT NOT NULL,
+                        PromptTokens INTEGER NOT NULL,
+                        CompletionTokens INTEGER NOT NULL,
+                        ReasoningTokens INTEGER NOT NULL,
+                        EstimatedCostUsd REAL NOT NULL
+                    );");
             }
             await TokenManager.InitializeAsync();
 
@@ -126,6 +140,62 @@ namespace DiscordAIBot
             {
                 Console.WriteLine($"[Error] コマンド登録エラー: {ex.Message}");
             }
+
+            if (!_usageTopicUpdaterStarted)
+            {
+                _usageTopicUpdaterStarted = true;
+                _ = Task.Run(UsageTopicUpdateLoopAsync);
+            }
+        }
+
+        // チャンネルトピックにクラウドAI利用額(今月・推定)を表示する。
+        // Discordのチャンネル編集にはレート制限(目安10分に2回程度)があるため、
+        // 一定間隔でのポーリング+差分がある場合のみ更新する方式にしている
+        private async Task UsageTopicUpdateLoopAsync()
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+
+            await UpdateUsageTopicAsync();
+            while (await timer.WaitForNextTickAsync())
+            {
+                await UpdateUsageTopicAsync();
+            }
+        }
+
+        private async Task UpdateUsageTopicAsync()
+        {
+            try
+            {
+                double totalCostUsd = await GetCurrentMonthCostUsdAsync();
+
+                if (Math.Abs(totalCostUsd - _lastDisplayedCostUsd) < 0.001)
+                {
+                    return;
+                }
+
+                if (_client.GetChannel(_chatAiChannelId) is ITextChannel channel)
+                {
+                    string topic = $"💰 今月のクラウドAI利用額(推定): ${totalCostUsd:F2} / $10.00 (Google Developer Program枠)";
+                    await channel.ModifyAsync(x => x.Topic = topic);
+                    _lastDisplayedCostUsd = totalCostUsd;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Warning] チャンネルトピックの更新に失敗しました: {ex.Message}");
+            }
+        }
+
+        private async Task<double> GetCurrentMonthCostUsdAsync()
+        {
+            // JST(UTC+9、DST無し)の暦月境界をUTCに変換してクエリする
+            DateTime nowJst = DateTime.UtcNow.AddHours(9);
+            DateTime startOfMonthUtc = new DateTime(nowJst.Year, nowJst.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddHours(-9);
+
+            using var db = new ChatDbContext();
+            return await db.UsageRecords
+                .Where(u => u.CreatedAt >= startOfMonthUtc)
+                .SumAsync(u => u.EstimatedCostUsd);
         }
 
         private async Task SlashCommandHandlerAsync(SocketSlashCommand command)

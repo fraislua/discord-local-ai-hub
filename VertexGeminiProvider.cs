@@ -223,12 +223,33 @@ namespace DiscordAIBot
                         textDelta = textElement.GetString();
                     }
 
+                    // usageMetadataは生成完了時のチャンク(finishReasonと同じチャンク)にのみ
+                    // トークン内訳が入る。thoughtsTokenCountは思考(reasoning)トークン数
+                    int? promptTokens = null;
+                    int? completionTokens = null;
+                    int? reasoningTokens = null;
+                    if (root.TryGetProperty("usageMetadata", out var usageMetadata))
+                    {
+                        if (usageMetadata.TryGetProperty("promptTokenCount", out var ptElement) && ptElement.ValueKind == JsonValueKind.Number)
+                        {
+                            promptTokens = ptElement.GetInt32();
+                        }
+                        if (usageMetadata.TryGetProperty("candidatesTokenCount", out var ctElement) && ctElement.ValueKind == JsonValueKind.Number)
+                        {
+                            completionTokens = ctElement.GetInt32();
+                        }
+                        if (usageMetadata.TryGetProperty("thoughtsTokenCount", out var rtElement) && rtElement.ValueKind == JsonValueKind.Number)
+                        {
+                            reasoningTokens = rtElement.GetInt32();
+                        }
+                    }
+
                     if (string.IsNullOrEmpty(textDelta) && finishReason == null)
                     {
                         continue;
                     }
 
-                    yield return new StreamChunk(textDelta, false, finishReason);
+                    yield return new StreamChunk(textDelta, false, finishReason, promptTokens, completionTokens, reasoningTokens);
                 }
             }
         }

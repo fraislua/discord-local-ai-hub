@@ -32,9 +32,23 @@ namespace DiscordAIBot
 
     // 正規化済みストリームチャンク
     // （GC Allocを避けるため readonly record struct を採用し、スタックに確保させます）
+    // PromptTokens/CompletionTokens/ReasoningTokensは、クラウドプロバイダーがusage情報を
+    // 返す最終チャンクでのみ値が入る（ローカルモデル等、対応しない場合はnullのまま）
     public readonly record struct StreamChunk(
         string? TextDelta,
         bool IsReasoning,
-        string? FinishReason
+        string? FinishReason,
+        int? PromptTokens = null,
+        int? CompletionTokens = null,
+        int? ReasoningTokens = null
+    );
+
+    // StreamResponseHandlerの結果。PromptTokens等はクラウドプロバイダーがusageを
+    // 返した場合のみ値が入る（ローカルモデルはnullのまま＝コスト計算対象外）
+    public record StreamResult(
+        string RawText,
+        int? PromptTokens,
+        int? CompletionTokens,
+        int? ReasoningTokens
     );
 }
