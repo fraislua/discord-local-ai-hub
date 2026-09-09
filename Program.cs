@@ -344,14 +344,15 @@ namespace DiscordAIBot
             return usedToday + reserve <= pool.Value.Cap;
         }
 
-        // /effortの選択メニュー用の日本語ラベル・説明文
+        // /effortの選択メニュー用のラベル・説明文(ユーザー希望により英語表記。
+        // 他のUIテキストは引き続き日本語のまま)
         private static (string Label, string Description) GetEffortDisplay(EffortLevel level) => level switch
         {
-            EffortLevel.None => ("なし", "思考せず即座に応答。最速・最安（対応モデルのみ）"),
-            EffortLevel.Low => ("低", "応答速度重視。日常会話向け"),
-            EffortLevel.Medium => ("中（デフォルト）", "バランス型"),
-            EffortLevel.High => ("高", "複雑な問題向け。処理時間が長くなります"),
-            EffortLevel.XHigh => ("最高", "非常に複雑な問題向け。処理時間・コストが大幅に増加（対応モデルのみ）"),
+            EffortLevel.None => ("None", "No reasoning, fastest & cheapest (supported models only)"),
+            EffortLevel.Low => ("Low", "Prioritizes speed. Good for everyday chat"),
+            EffortLevel.Medium => ("Medium (Default)", "Balanced"),
+            EffortLevel.High => ("High", "For complex problems. Takes longer"),
+            EffortLevel.XHigh => ("XHigh", "For very complex problems. Significantly higher latency & cost (supported models only)"),
             _ => (level.ToString(), "")
         };
 
