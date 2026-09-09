@@ -60,7 +60,7 @@ namespace DiscordAIBot
                 {
                     DisplayName = "Qwen3.8-27B",
                     ModelId = "qwen/qwen3.8-27b",
-                    ContextWindow = 262144,
+                    ContextWindow = 8192,
                     MaxOutputTokens = -1,
                     Description = "高精度-低速推論 (画像対応 / ローカル推論)",
                     IsVlm = true,
