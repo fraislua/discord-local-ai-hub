@@ -164,8 +164,9 @@ namespace DiscordAIBot
                 string folderId = await _driveUploader.GetOrCreateFolderAsync(DriveFolderName, cancellationToken);
 
                 string initialContent = $"# {threadTitle}\n\n(会話開始: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC)\n";
+                string createdDateJst = DateTime.Now.ToString("yyyyMMdd");
                 var (fileId, webViewLink) = await _driveUploader.CreateFileInFolderAsync(
-                    $"{threadTitle} ({threadId}).md", initialContent, folderId, cancellationToken);
+                    $"{threadTitle}[{createdDateJst}]({threadId}).md", initialContent, folderId, cancellationToken);
 
                 db.ThreadDriveFiles.Add(new ThreadDriveFile
                 {
