@@ -41,10 +41,6 @@ namespace DiscordAIBot
             EffortLevel effort,
             CancellationToken cancellationToken)
         {
-            // スレッド(セッション)ごとにGoogle Driveの会話記録ファイルを用意し、
-            // 初回のみリンクをピン留めする(失敗してもチャット自体は継続する)
-            await EnsureThreadDriveFileAsync(threadId, statusMessage, cancellationToken);
-
             int currentBaseTokens = TokenManager.CountTokens(systemPrompt) + TokenManager.CountTokens(userMessage.Content);
             int availableTokensForAttachments = modelMeta.ContextWindow - 2000 - currentBaseTokens;
             if (availableTokensForAttachments < 0) availableTokensForAttachments = 0;
@@ -151,8 +147,11 @@ namespace DiscordAIBot
         }
 
         // スレッドのGoogle Drive記録ファイルが未作成なら作成し、リンクをピン留めする。
-        // 既に作成済み(DBにレコードあり)なら何もしない
-        private async Task EnsureThreadDriveFileAsync(ulong threadId, IUserMessage statusMessage, CancellationToken cancellationToken)
+        // 既に作成済み(DBにレコードあり)なら何もしない。
+        // 呼び出し元(Program.cs)が、そのスレッドで最初のステータス/応答メッセージを
+        // 送る前に呼ぶことで、Drive記録リンクがスレッドの一番上(ユーザーの初回投稿の
+        // 直後)に来るようにしている
+        public async Task EnsureThreadDriveFileAsync(ulong threadId, SocketThreadChannel thread, CancellationToken cancellationToken)
         {
             using var db = new ChatDbContext();
             bool exists = await db.ThreadDriveFiles.AnyAsync(t => t.ThreadId == threadId, cancellationToken);
@@ -160,9 +159,7 @@ namespace DiscordAIBot
 
             try
             {
-                string threadTitle = statusMessage.Channel is SocketThreadChannel threadChannel
-                    ? threadChannel.Name
-                    : $"thread-{threadId}";
+                string threadTitle = thread.Name;
 
                 string folderId = await _driveUploader.GetOrCreateFolderAsync(DriveFolderName, cancellationToken);
 
@@ -179,7 +176,7 @@ namespace DiscordAIBot
                 });
                 await db.SaveChangesAsync(cancellationToken);
 
-                var pinnedMsg = await statusMessage.Channel.SendMessageAsync($"📄 このスレッドの記録: {webViewLink}");
+                var pinnedMsg = await thread.SendMessageAsync($"📄 このスレッドの記録: {webViewLink}");
                 await pinnedMsg.PinAsync();
             }
             catch (Exception ex)

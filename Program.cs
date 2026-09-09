@@ -516,6 +516,10 @@ namespace DiscordAIBot
             // クラウドモデル自動失効(アイドルタイマー)のための最終活動時刻を更新
             _lastActivityAt[contextId] = DateTime.UtcNow;
 
+            // Google Drive記録ファイルの確保・ピン留めは、このスレッドで最初に送る
+            // ステータス/応答メッセージより前に行う(スレッド最上部に来るようにするため)
+            await _orchestrator.EnsureThreadDriveFileAsync(contextId, targetThread, CancellationToken.None);
+
             // 安全なフォールバックロジック (KeyNotFoundExceptionの完全防止)
             if (!_channelModels.TryGetValue(contextId, out string? targetModelId) || targetModelId == null || !ModelRegistry.AvailableModels.ContainsKey(targetModelId))
             {
