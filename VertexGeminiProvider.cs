@@ -126,12 +126,20 @@ namespace DiscordAIBot
                 );
             }
 
+            string thinkingLevel = request.Effort switch
+            {
+                EffortLevel.Low => "LOW",
+                EffortLevel.High => "HIGH",
+                _ => "MEDIUM"
+            };
+
             var requestBodyObj = new GeminiRequestDto(
                 Contents: contents,
                 SystemInstruction: systemInstruction,
                 GenerationConfig: new GeminiGenerationConfigDto(
                     Temperature: request.Temperature,
-                    MaxOutputTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : 8192
+                    MaxOutputTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : 8192,
+                    ThinkingConfig: new GeminiThinkingConfigDto(ThinkingLevel: thinkingLevel)
                 )
             );
 
@@ -284,7 +292,14 @@ namespace DiscordAIBot
 
         private record GeminiGenerationConfigDto(
             double Temperature,
-            int MaxOutputTokens
+            int MaxOutputTokens,
+            GeminiThinkingConfigDto ThinkingConfig
+        );
+
+        // Gemini 3系のthinkingLevel(LOW/MEDIUM/HIGH)。実機検証済み(旧thinkingBudgetの
+        // 数値指定も動くが非推奨のため、新方式のenumを採用)
+        private record GeminiThinkingConfigDto(
+            string ThinkingLevel
         );
     }
 }

@@ -58,12 +58,23 @@ namespace DiscordAIBot
 
             messages.Add(new GrokMessageDto("user", request.CurrentUserText));
 
+            // 実機検証済み: Vertex経由で受理される値は low/medium/high の3種
+            // (xAI公式ドキュメント記載のxhigh、Vertexのエラーメッセージが例示するmaxは
+            // いずれも実際には拒否される)
+            string reasoningEffort = request.Effort switch
+            {
+                EffortLevel.Low => "low",
+                EffortLevel.High => "high",
+                _ => "medium"
+            };
+
             var requestBodyObj = new GrokRequestDto(
                 Model: request.ModelId,
                 Messages: messages,
                 Temperature: request.Temperature,
                 MaxTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : -1,
-                Stream: true
+                Stream: true,
+                ReasoningEffort: reasoningEffort
             );
 
             string requestJson = JsonSerializer.Serialize(requestBodyObj, _jsonOptions);
@@ -217,7 +228,8 @@ namespace DiscordAIBot
             [property: JsonPropertyName("messages")] IReadOnlyList<GrokMessageDto> Messages,
             [property: JsonPropertyName("temperature")] double Temperature,
             [property: JsonPropertyName("max_tokens")] int MaxTokens,
-            [property: JsonPropertyName("stream")] bool Stream
+            [property: JsonPropertyName("stream")] bool Stream,
+            [property: JsonPropertyName("reasoning_effort")] string ReasoningEffort
         );
 
         private record GrokMessageDto(

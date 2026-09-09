@@ -18,6 +18,7 @@ namespace DiscordAIBot
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         private readonly ConcurrentDictionary<ulong, CancellationTokenSource> _activeGenerations = new();
         private readonly ConcurrentDictionary<ulong, string> _channelModels = new();
+        private readonly ConcurrentDictionary<ulong, EffortLevel> _channelEfforts = new();
 
         private ChatOrchestrator _orchestrator = null!;
         private string _discordToken = string.Empty;
@@ -132,9 +133,14 @@ namespace DiscordAIBot
                 .WithName("model")
                 .WithDescription("このチャンネル・スレッドで使用するAIモデルを選択します。");
 
+            var effortCommand = new SlashCommandBuilder()
+                .WithName("effort")
+                .WithDescription("このチャンネル・スレッドでのクラウドAIモデルの思考の深さ(エフォート)を設定します。");
+
             try
             {
                 await _client.CreateGlobalApplicationCommandAsync(slashCommand.Build());
+                await _client.CreateGlobalApplicationCommandAsync(effortCommand.Build());
             }
             catch (Exception ex)
             {
@@ -214,6 +220,18 @@ namespace DiscordAIBot
                 var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
                 await command.RespondAsync("👇 使用するモデルを選択してください（この場所での会話に適用されます）:", components: builder.Build());
             }
+            else if (command.Data.Name == "effort")
+            {
+                var menuBuilder = new SelectMenuBuilder()
+                    .WithPlaceholder("エフォートを選択してください")
+                    .WithCustomId("effort_select_menu")
+                    .AddOption("低", EffortLevel.Low.ToString(), "応答速度重視。日常会話向け")
+                    .AddOption("中（デフォルト）", EffortLevel.Medium.ToString(), "バランス型")
+                    .AddOption("高", EffortLevel.High.ToString(), "複雑な問題向け。処理時間が長くなります");
+
+                var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
+                await command.RespondAsync("👇 クラウドAIモデル(Gemini/Grok)のエフォートを選択してください（ローカルモデルには影響しません）:", components: builder.Build());
+            }
         }
 
         private async Task SelectMenuExecutedAsync(SocketMessageComponent component)
@@ -226,6 +244,17 @@ namespace DiscordAIBot
 
                 string modelName = ModelRegistry.AvailableModels[selectedModelId].DisplayName;
                 await component.RespondAsync($"✅ この場所での使用モデルを **{modelName}** に変更しました。");
+            }
+            else if (component.Data.CustomId == "effort_select_menu")
+            {
+                string selectedEffort = component.Data.Values.First();
+                ulong contextId = component.Channel.Id;
+
+                if (Enum.TryParse<EffortLevel>(selectedEffort, out var effort))
+                {
+                    _channelEfforts[contextId] = effort;
+                    await component.RespondAsync($"✅ この場所でのエフォートを **{effort}** に変更しました。");
+                }
             }
         }
 
@@ -307,6 +336,8 @@ namespace DiscordAIBot
 
             var targetModel = ModelRegistry.AvailableModels[targetModelId];
 
+            EffortLevel effort = _channelEfforts.TryGetValue(contextId, out var customEffort) ? customEffort : EffortLevel.Medium;
+
             string systemPrompt = "優秀な創作アシスタントとして、ゲームのアイデア、コアループ、システム設計、企画書のブラッシュアップを支援してください。ステップバイステップで深く思考し、クリエイティブな提案を行ってください。";
 
             if (targetModel.Provider == ApiProvider.LmStudio)
@@ -343,6 +374,7 @@ namespace DiscordAIBot
                         contextId,
                         targetModel,
                         systemPrompt,
+                        effort,
                         cts.Token
                     );
                 }

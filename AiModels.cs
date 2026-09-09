@@ -15,6 +15,14 @@ namespace DiscordAIBot
         }
     }
 
+    // クラウドモデルの思考(reasoning)の深さ。ローカルモデル(LmStudioProvider)は無視する
+    public enum EffortLevel
+    {
+        Low,
+        Medium,
+        High
+    }
+
     // 正規化済みリクエスト
     // （どのAIプロバイダーを呼び出す際にも、この形でデータを渡します）
     public record AiRequest(
@@ -24,7 +32,8 @@ namespace DiscordAIBot
         string CurrentUserText,
         IReadOnlyList<string> CurrentImagesBase64,
         double Temperature,
-        int MaxOutputTokens
+        int MaxOutputTokens,
+        EffortLevel Effort = EffortLevel.Medium
     );
 
     // 履歴用のロールとコンテンツ

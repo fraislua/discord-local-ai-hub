@@ -31,6 +31,7 @@ namespace DiscordAIBot
             ulong threadId,
             ModelMetadata modelMeta,
             string systemPrompt,
+            EffortLevel effort,
             CancellationToken cancellationToken)
         {
             int currentBaseTokens = TokenManager.CountTokens(systemPrompt) + TokenManager.CountTokens(userMessage.Content);
@@ -74,7 +75,8 @@ namespace DiscordAIBot
                 CurrentUserText: userTextForAi,
                 CurrentImagesBase64: base64Images,
                 Temperature: 0.7,
-                MaxOutputTokens: modelMeta.MaxOutputTokens
+                MaxOutputTokens: modelMeta.MaxOutputTokens,
+                Effort: effort
             );
 
             int initialContextTokens = TokenManager.CountTokens(systemPrompt) + TokenManager.CountTokens(userTextForAi);
