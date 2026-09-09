@@ -14,15 +14,22 @@ namespace DiscordAIBot
         private readonly Func<ApiProvider, IAiProvider> _providerFactory;
         private readonly AttachmentProcessor _attachmentProcessor;
         private readonly StreamResponseHandler _streamResponseHandler;
+        private readonly GoogleDriveUploader _driveUploader;
+
+        // 長文(Discordで複数ブロックに分割される長さ)の応答をGoogle Driveにも保存する閾値。
+        // StreamResponseHandlerの分割閾値と揃える
+        private const int DriveUploadThresholdChars = StreamResponseHandler.MaxDiscordMessageLength;
 
         public ChatOrchestrator(
             Func<ApiProvider, IAiProvider> providerFactory,
             AttachmentProcessor attachmentProcessor,
-            StreamResponseHandler streamResponseHandler)
+            StreamResponseHandler streamResponseHandler,
+            GoogleDriveUploader driveUploader)
         {
             _providerFactory = providerFactory ?? throw new ArgumentNullException(nameof(providerFactory));
             _attachmentProcessor = attachmentProcessor;
             _streamResponseHandler = streamResponseHandler;
+            _driveUploader = driveUploader;
         }
 
         public async Task ProcessUserMessageAsync(
@@ -132,6 +139,25 @@ namespace DiscordAIBot
                         streamResult.CompletionTokens ?? 0,
                         streamResult.ReasoningTokens ?? 0,
                         estimatedCost.Value);
+                }
+            }
+
+            // Discordで複数ブロックに分割されるような長文は、コピーしやすいようGoogle Driveにも保存する
+            if (streamResult.RawText.Length > DriveUploadThresholdChars)
+            {
+                try
+                {
+                    string fileName = $"discord-ai-hub_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{threadId}.md";
+                    string? driveLink = await _driveUploader.UploadTextFileAsync(fileName, streamResult.RawText, cancellationToken);
+
+                    if (driveLink != null)
+                    {
+                        await statusMessage.Channel.SendMessageAsync($"📄 長文のためGoogle Driveにも保存しました: {driveLink}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Warning] Google Driveへの保存に失敗しました: {ex.Message}");
                 }
             }
         }

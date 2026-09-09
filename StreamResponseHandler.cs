@@ -12,7 +12,7 @@ namespace DiscordAIBot
     public class StreamResponseHandler
     {
         private readonly TimeSpan _updateInterval = TimeSpan.FromSeconds(1.5);
-        private const int MaxDiscordMessageLength = 1950;
+        public const int MaxDiscordMessageLength = 1950;
 
         public async Task<StreamResult> HandleStreamAsync(
             IAsyncEnumerable<StreamChunk> stream,

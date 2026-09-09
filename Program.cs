@@ -136,8 +136,9 @@ namespace DiscordAIBot
 
             var attachmentProcessor = new AttachmentProcessor(_httpClient);
             var streamHandler = new StreamResponseHandler();
+            var driveUploader = new GoogleDriveUploader(_httpClient, googleAdcTokenProvider, _vertexProjectId);
 
-            _orchestrator = new ChatOrchestrator(providerFactory, attachmentProcessor, streamHandler);
+            _orchestrator = new ChatOrchestrator(providerFactory, attachmentProcessor, streamHandler, driveUploader);
 
             await _client.LoginAsync(TokenType.Bot, _discordToken);
             await _client.StartAsync();
