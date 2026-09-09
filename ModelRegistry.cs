@@ -7,7 +7,8 @@ namespace DiscordAIBot
         LmStudio,
         GoogleAiStudio, // 当面残置（現在は未使用のモデルエントリ無し）
         VertexGemini,
-        VertexGrok
+        VertexGrok,
+        OpenAi
     }
 
     public struct ModelMetadata
@@ -93,6 +94,45 @@ namespace DiscordAIBot
                     Description = "xAI Grok (Vertex AI)",
                     IsVlm = false,
                     Provider = ApiProvider.VertexGrok
+                }
+            },
+            {
+                "gpt-5.6-sol",
+                new ModelMetadata
+                {
+                    DisplayName = "GPT-5.6 Sol",
+                    ModelId = "gpt-5.6-sol",
+                    ContextWindow = 1050000,
+                    MaxOutputTokens = 8192,
+                    Description = "OpenAI最上位モデル (無料枠 25万トークン/日)",
+                    IsVlm = true,
+                    Provider = ApiProvider.OpenAi
+                }
+            },
+            {
+                "gpt-5.6-terra",
+                new ModelMetadata
+                {
+                    DisplayName = "GPT-5.6 Terra",
+                    ModelId = "gpt-5.6-terra",
+                    ContextWindow = 1050000,
+                    MaxOutputTokens = 8192,
+                    Description = "OpenAIバランス型モデル (無料枠 250万トークン/日、Lunaと共有)",
+                    IsVlm = true,
+                    Provider = ApiProvider.OpenAi
+                }
+            },
+            {
+                "gpt-5.6-luna",
+                new ModelMetadata
+                {
+                    DisplayName = "GPT-5.6 Luna",
+                    ModelId = "gpt-5.6-luna",
+                    ContextWindow = 1050000,
+                    MaxOutputTokens = 8192,
+                    Description = "OpenAI高速・低コストモデル (無料枠 250万トークン/日、Terraと共有)",
+                    IsVlm = true,
+                    Provider = ApiProvider.OpenAi
                 }
             }
         };

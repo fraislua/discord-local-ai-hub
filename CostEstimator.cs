@@ -22,8 +22,19 @@ namespace DiscordAIBot
         private const double GrokOutputPerMillionUsdStandard = 6.00; // reasoningトークン含む
         private const double GrokOutputPerMillionUsdLong = 12.00;
 
+        // OpenAI GPT-5.6 Sol/Terra/Luna単価(2026-09時点、OpenAI公式発表値)。
+        // 日次無料枠(OpenAiQuota)内で完結する限りは実際には課金されないが、
+        // 万一超過した場合の実額を正しく記録するため、無料枠の有無に関わらず
+        // 名目コストとして常に計算する(Gemini/Grokと同じ方針)
+        private const double OpenAiSolInputPerMillionUsd = 5.00;
+        private const double OpenAiSolOutputPerMillionUsd = 30.00;
+        private const double OpenAiTerraInputPerMillionUsd = 2.50;
+        private const double OpenAiTerraOutputPerMillionUsd = 15.00;
+        private const double OpenAiLunaInputPerMillionUsd = 1.00;
+        private const double OpenAiLunaOutputPerMillionUsd = 6.00;
+
         // ローカルモデル等、コスト計算対象外のプロバイダーはnullを返す
-        public static double? EstimateCostUsd(ApiProvider provider, int promptTokens, int completionTokens, int reasoningTokens)
+        public static double? EstimateCostUsd(ApiProvider provider, string modelId, int promptTokens, int completionTokens, int reasoningTokens)
         {
             switch (provider)
             {
@@ -40,6 +51,22 @@ namespace DiscordAIBot
                     double outputRate = isLongContext ? GrokOutputPerMillionUsdLong : GrokOutputPerMillionUsdStandard;
                     double inputCost = promptTokens / 1_000_000.0 * inputRate;
                     double outputCost = (completionTokens + reasoningTokens) / 1_000_000.0 * outputRate;
+                    return inputCost + outputCost;
+                }
+                case ApiProvider.OpenAi:
+                {
+                    var (inputRate, outputRate) = modelId switch
+                    {
+                        "gpt-5.6-sol" => (OpenAiSolInputPerMillionUsd, OpenAiSolOutputPerMillionUsd),
+                        "gpt-5.6-terra" => (OpenAiTerraInputPerMillionUsd, OpenAiTerraOutputPerMillionUsd),
+                        "gpt-5.6-luna" => (OpenAiLunaInputPerMillionUsd, OpenAiLunaOutputPerMillionUsd),
+                        _ => (0.0, 0.0)
+                    };
+                    double inputCost = promptTokens / 1_000_000.0 * inputRate;
+                    // OpenAIのcompletion_tokensには既にreasoning_tokensが含まれるため
+                    // (completion_tokens_detailsは内訳であり加算対象ではない)、
+                    // Gemini/Grokと異なりreasoningTokensを別途加算しない(二重計上防止)
+                    double outputCost = completionTokens / 1_000_000.0 * outputRate;
                     return inputCost + outputCost;
                 }
                 default:

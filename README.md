@@ -24,7 +24,7 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 
 ## 対応モデル
 
-`/model` コマンドで以下5モデルを切り替えられます（`ModelRegistry.cs`で定義）。
+`/model` コマンドで以下8モデルを切り替えられます（`ModelRegistry.cs`で定義）。
 
 | モデル | 実行先 | 画像対応 |
 |---|---|---|
@@ -33,6 +33,14 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 | Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (LM Studio) | ○ |
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Vertex AI | ○ |
 | Grok 4.6 (`xai/grok-4.6`) | Vertex AI | × (未検証のため無効化) |
+| GPT-5.6 Sol (`gpt-5.6-sol`) | OpenAI API | ○ |
+| GPT-5.6 Terra (`gpt-5.6-terra`) | OpenAI API | ○ |
+| GPT-5.6 Luna (`gpt-5.6-luna`) | OpenAI API | ○ |
+
+GPT-5.6系はOpenAIのデータ共有プログラム(無料枠)を前提とした運用（`OpenAiQuota.cs`）。
+Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日の日次上限があり、
+`Program.cs`側で送信前に事前チェックし、上限に達する場合は課金を避けるため送信自体を
+拒否する（実際に上限に達した実績は無いため、値は公称値ベースで要継続確認）。
 
 ## 動作環境
 
@@ -69,6 +77,7 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
    | `GoogleAdcCredentialPath` | Vertex AI認証用ADC JSONファイルへのパス（例: `secrets/google-adc.json`。**git管理対象外・絶対にコミットしないこと**） |
    | `VertexProjectId` | Vertex AIを呼び出すGoogle CloudプロジェクトID |
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
+   | `OpenAiApiKey` | OpenAI APIキー（GPT-5.6 Sol/Terra/Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
 
 3. トークン数カウント用に、使用モデル（Gemma 4）の `tokenizer.json` を実行ファイルと同じディレクトリに配置します（Hugging Faceのモデルページから入手できます。未配置の場合は文字数ベースの概算モードで動作します）。
 
@@ -99,6 +108,8 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 | `GoogleAdcTokenProvider.cs` | ADC(Application Default Credentials)からVertex AI用アクセストークンを取得（ライブラリ側キャッシュ・自動リフレッシュに依存） |
 | `VertexGeminiProvider.cs` | Vertex AIネイティブエンドポイント経由のGemini通信。ロール交互制約等はGoogleAiStudioProviderと同一ロジック |
 | `VertexGrokProvider.cs` | Vertex AIのOpenAI互換エンドポイント経由のGrok通信 |
+| `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-5.6 Sol/Terra/Luna） |
+| `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |
 | `AttachmentProcessor.cs` | 添付ファイル・画像の処理。メモリ保護機構を内包 |
 | `TokenManager.cs` | トークナイザーによるトークン数カウント（シングルトン） |

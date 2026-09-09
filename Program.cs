@@ -28,10 +28,13 @@ namespace DiscordAIBot
         private string _googleAdcCredentialPath = string.Empty;
         private string _vertexProjectId = string.Empty;
         private string _vertexRegion = string.Empty;
+        private string _openAiApiKey = string.Empty;
 
         private ulong _chatAiChannelId;
         private bool _usageTopicUpdaterStarted = false;
         private double _lastDisplayedCostUsd = -1;
+        private int _lastDisplayedSolTokensToday = -1;
+        private int _lastDisplayedLightTokensToday = -1;
 
         // 連投防止(アカウント乗っ取り等への対策)。ユーザー単位で管理
         // (チャンネル本体への投稿は毎回新規スレッドになるため、スレッド単位では検知できない)
@@ -73,6 +76,7 @@ namespace DiscordAIBot
                 _googleAdcCredentialPath = config["BotSettings:GoogleAdcCredentialPath"] ?? throw new Exception("GoogleAdcCredentialPathが設定されていません。");
                 _vertexProjectId = config["BotSettings:VertexProjectId"] ?? throw new Exception("VertexProjectIdが設定されていません。");
                 _vertexRegion = config["BotSettings:VertexRegion"] ?? throw new Exception("VertexRegionが設定されていません。");
+                _openAiApiKey = config["BotSettings:OpenAiApiKey"] ?? throw new Exception("OpenAiApiKeyが設定されていません。");
 
                 if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId))
                 {
@@ -131,6 +135,7 @@ namespace DiscordAIBot
             var googleAdcTokenProvider = new GoogleAdcTokenProvider(_googleAdcCredentialPath);
             IAiProvider vertexGeminiProvider = new VertexGeminiProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
             IAiProvider vertexGrokProvider = new VertexGrokProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
+            IAiProvider openAiProvider = new OpenAiProvider(_httpClient, _openAiApiKey);
 
             Func<ApiProvider, IAiProvider> providerFactory = providerType => providerType switch
             {
@@ -138,6 +143,7 @@ namespace DiscordAIBot
                 ApiProvider.GoogleAiStudio => googleAiProvider,
                 ApiProvider.VertexGemini => vertexGeminiProvider,
                 ApiProvider.VertexGrok => vertexGrokProvider,
+                ApiProvider.OpenAi => openAiProvider,
                 _ => throw new ArgumentException($"未対応のプロバイダーです: {providerType}")
             };
 
@@ -262,17 +268,27 @@ namespace DiscordAIBot
             try
             {
                 double totalCostUsd = await GetCurrentMonthCostUsdAsync();
+                int solUsedToday = await GetOpenAiPoolUsageTodayAsync(OpenAiQuota.LargePoolModelIds);
+                int lightUsedToday = await GetOpenAiPoolUsageTodayAsync(OpenAiQuota.LightPoolModelIds);
 
-                if (Math.Abs(totalCostUsd - _lastDisplayedCostUsd) < 0.001)
+                bool costChanged = Math.Abs(totalCostUsd - _lastDisplayedCostUsd) >= 0.001;
+                bool solChanged = solUsedToday != _lastDisplayedSolTokensToday;
+                bool lightChanged = lightUsedToday != _lastDisplayedLightTokensToday;
+
+                if (!costChanged && !solChanged && !lightChanged)
                 {
                     return;
                 }
 
                 if (_client.GetChannel(_chatAiChannelId) is ITextChannel channel)
                 {
-                    string topic = $"💰 今月のクラウドAI利用額(推定): ${totalCostUsd:F2} / $10.00 (Google Developer Program枠)";
+                    string topic = $"💰 今月のクラウドAI利用額(推定): ${totalCostUsd:F2} / $10.00 (Google Developer Program枠) " +
+                        $"| 🆓 OpenAI無料枠(本日) Sol {solUsedToday / 1000}K/{OpenAiQuota.LargePoolDailyCap / 1000}K " +
+                        $"Terra+Luna {lightUsedToday / 1000}K/{OpenAiQuota.LightPoolDailyCap / 1000}K";
                     await channel.ModifyAsync(x => x.Topic = topic);
                     _lastDisplayedCostUsd = totalCostUsd;
+                    _lastDisplayedSolTokensToday = solUsedToday;
+                    _lastDisplayedLightTokensToday = lightUsedToday;
                 }
             }
             catch (Exception ex)
@@ -287,10 +303,45 @@ namespace DiscordAIBot
             DateTime nowJst = DateTime.UtcNow.AddHours(9);
             DateTime startOfMonthUtc = new DateTime(nowJst.Year, nowJst.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddHours(-9);
 
+            // このトピック行はGoogle Developer Programの$10枠専用の表示のため、
+            // OpenAI(別プログラム、日次無料枠は別途🆓表示)のUsageRecordsは合算対象外にする
+            var googleProgramModelIds = ModelRegistry.AvailableModels.Values
+                .Where(m => m.Provider == ApiProvider.VertexGemini || m.Provider == ApiProvider.VertexGrok)
+                .Select(m => m.ModelId)
+                .ToList();
+
             using var db = new ChatDbContext();
             return await db.UsageRecords
-                .Where(u => u.CreatedAt >= startOfMonthUtc)
+                .Where(u => u.CreatedAt >= startOfMonthUtc && googleProgramModelIds.Contains(u.ModelId))
                 .SumAsync(u => u.EstimatedCostUsd);
+        }
+
+        // OpenAIデータ共有プログラムの日次無料枠、当日(JST暦日)の該当プール累計消費量
+        private async Task<int> GetOpenAiPoolUsageTodayAsync(IReadOnlyList<string> poolModelIds)
+        {
+            DateTime nowJst = DateTime.UtcNow.AddHours(9);
+            DateTime startOfDayUtc = new DateTime(nowJst.Year, nowJst.Month, nowJst.Day, 0, 0, 0, DateTimeKind.Utc).AddHours(-9);
+
+            using var db = new ChatDbContext();
+            return await db.UsageRecords
+                .Where(u => u.CreatedAt >= startOfDayUtc && poolModelIds.Contains(u.ModelId))
+                .SumAsync(u => u.PromptTokens + u.CompletionTokens);
+        }
+
+        // 送信前の事前ブロック判定。「当日の該当プール累計 + このモデルの最大出力トークン数」が
+        // 日次無料枠上限を超える場合はfalse(実際に課金が発生するリクエストは絶対に送らない)
+        private async Task<bool> HasOpenAiBudgetAsync(string modelId)
+        {
+            var pool = OpenAiQuota.GetPool(modelId);
+            if (pool == null) return true;
+
+            int usedToday = await GetOpenAiPoolUsageTodayAsync(pool.Value.PoolModelIds);
+
+            int reserve = ModelRegistry.AvailableModels.TryGetValue(modelId, out var meta) && meta.MaxOutputTokens > 0
+                ? meta.MaxOutputTokens
+                : 8192;
+
+            return usedToday + reserve <= pool.Value.Cap;
         }
 
         private async Task SlashCommandHandlerAsync(SocketSlashCommand command)
@@ -542,6 +593,15 @@ namespace DiscordAIBot
                 if (!isOnline)
                 {
                     await targetThread.SendMessageAsync("❌ **[通信失敗]** デスクトップPCのAIエンジンがスリープ中、または未起動です。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。");
+                    return;
+                }
+            }
+            else if (targetModel.Provider == ApiProvider.OpenAi)
+            {
+                bool hasBudget = await HasOpenAiBudgetAsync(targetModel.ModelId);
+                if (!hasBudget)
+                {
+                    await targetThread.SendMessageAsync($"❌ **[無料枠超過]** 本日の`{targetModel.DisplayName}`無料枠(データ共有プログラム)を使い切りました。課金を避けるため送信を中止しました。\n💡 `/model` コマンドでローカルモデル、または別のモデルに切り替えてください。");
                     return;
                 }
             }

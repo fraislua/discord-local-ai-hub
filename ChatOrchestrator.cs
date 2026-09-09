@@ -127,6 +127,7 @@ namespace DiscordAIBot
             {
                 double? estimatedCost = CostEstimator.EstimateCostUsd(
                     modelMeta.Provider,
+                    modelMeta.ModelId,
                     streamResult.PromptTokens.Value,
                     streamResult.CompletionTokens ?? 0,
                     streamResult.ReasoningTokens ?? 0);
