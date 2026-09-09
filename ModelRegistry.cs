@@ -23,8 +23,10 @@ namespace DiscordAIBot
 
     public static class ModelRegistry
     {
-        // チャンネル統合に伴い、Unity/雑談で分かれていたデフォルトモデル定数を1本化
-        public const string DefaultModelId = "gemini-3.8-flash";
+        // セキュリティ対策として、デフォルトは課金の発生しないローカルモデルとする。
+        // クラウドモデルは/modelコマンドで都度明示的に選択する運用（アカウント乗っ取り等の
+        // リスクを踏まえ、既定で高コストなクラウドモデルが有効にならないようにする）
+        public const string DefaultModelId = "google/gemma-4-12b-qat";
 
         public static readonly Dictionary<string, ModelMetadata> AvailableModels = new()
         {

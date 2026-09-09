@@ -61,9 +61,23 @@ namespace DiscordAIBot
 
             long currentUserMessageId = await SaveUserMessageAsync(threadId, userTextForDb);
 
-            string statusText = base64Images.Count > 0 
-                ? $"🖼️ [2/3] 画像({base64Images.Count}枚)をエンコード中... Model: `{modelMeta.ModelId}`"
-                : $"🚀 [2/3] Loading AI model (`{modelMeta.ModelId}`)...";
+            // Vertex経由のクラウドモデルは思考完了までテキストを一切ストリームしないため、
+            // 「Loading」ではなく「思考中」と明示する(ローカルモデルのロード待ちと区別)
+            bool isCloudProvider = modelMeta.Provider == ApiProvider.VertexGemini || modelMeta.Provider == ApiProvider.VertexGrok;
+
+            string statusText;
+            if (base64Images.Count > 0)
+            {
+                statusText = $"🖼️ [2/3] 画像({base64Images.Count}枚)をエンコード中... Model: `{modelMeta.ModelId}`";
+            }
+            else if (isCloudProvider)
+            {
+                statusText = $"💭 [2/3] 思考中... (`{modelMeta.ModelId}`)";
+            }
+            else
+            {
+                statusText = $"🚀 [2/3] Loading AI model (`{modelMeta.ModelId}`)...";
+            }
             await statusMessage.ModifyAsync(m => m.Content = statusText);
 
             var history = await GetAndTrimHistoryAsync(threadId, modelMeta.ContextWindow, currentUserMessageId, userTextForAi, systemPrompt, cancellationToken);

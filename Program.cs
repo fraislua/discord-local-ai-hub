@@ -19,6 +19,7 @@ namespace DiscordAIBot
         private readonly ConcurrentDictionary<ulong, CancellationTokenSource> _activeGenerations = new();
         private readonly ConcurrentDictionary<ulong, string> _channelModels = new();
         private readonly ConcurrentDictionary<ulong, EffortLevel> _channelEfforts = new();
+        private readonly ConcurrentDictionary<ulong, string> _channelPrompts = new();
 
         private ChatOrchestrator _orchestrator = null!;
         private string _discordToken = string.Empty;
@@ -47,6 +48,13 @@ namespace DiscordAIBot
             public bool DailyThresholdAcknowledgedToday { get; set; }
             public bool ConfirmationPending { get; set; }
         }
+
+        // クラウドモデル選択の自動失効(アカウント乗っ取り等への根本対策)。
+        // 一定時間操作が無いスレッドは、選択中のモデルがクラウドなら自動でローカルの
+        // デフォルトモデルに戻し、通知を送る
+        private const int IdleRevertMinutes = 30;
+        private readonly ConcurrentDictionary<ulong, DateTime> _lastActivityAt = new();
+        private bool _idleRevertLoopStarted = false;
 
         static async Task Main(string[] args) => await new Program().MainAsync();
 
@@ -153,10 +161,15 @@ namespace DiscordAIBot
                 .WithName("effort")
                 .WithDescription("このチャンネル・スレッドでのクラウドAIモデルの思考の深さ(エフォート)を設定します。");
 
+            var promptCommand = new SlashCommandBuilder()
+                .WithName("prompt")
+                .WithDescription("このチャンネル・スレッドで使用するシステムプロンプトを選択します。");
+
             try
             {
                 await _client.CreateGlobalApplicationCommandAsync(slashCommand.Build());
                 await _client.CreateGlobalApplicationCommandAsync(effortCommand.Build());
+                await _client.CreateGlobalApplicationCommandAsync(promptCommand.Build());
             }
             catch (Exception ex)
             {
@@ -167,6 +180,58 @@ namespace DiscordAIBot
             {
                 _usageTopicUpdaterStarted = true;
                 _ = Task.Run(UsageTopicUpdateLoopAsync);
+            }
+
+            if (!_idleRevertLoopStarted)
+            {
+                _idleRevertLoopStarted = true;
+                _ = Task.Run(IdleCloudModelRevertLoopAsync);
+            }
+        }
+
+        // 一定時間操作の無いスレッドのクラウドモデル選択を、セキュリティ対策として
+        // ローカルのデフォルトモデルへ自動的に戻す
+        private async Task IdleCloudModelRevertLoopAsync()
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+
+            while (await timer.WaitForNextTickAsync())
+            {
+                await RevertIdleCloudModelsAsync();
+            }
+        }
+
+        private async Task RevertIdleCloudModelsAsync()
+        {
+            DateTime now = DateTime.UtcNow;
+
+            foreach (var kvp in _channelModels)
+            {
+                ulong contextId = kvp.Key;
+                string modelId = kvp.Value;
+
+                if (!ModelRegistry.AvailableModels.TryGetValue(modelId, out var modelMeta)) continue;
+                if (modelMeta.Provider == ApiProvider.LmStudio) continue; // 既にローカルなら対象外
+
+                if (!_lastActivityAt.TryGetValue(contextId, out var lastActivity)) continue;
+                if ((now - lastActivity).TotalMinutes < IdleRevertMinutes) continue;
+
+                _channelModels[contextId] = ModelRegistry.DefaultModelId;
+                _lastActivityAt.TryRemove(contextId, out _);
+
+                try
+                {
+                    if (_client.GetChannel(contextId) is IMessageChannel channel)
+                    {
+                        string defaultModelName = ModelRegistry.AvailableModels[ModelRegistry.DefaultModelId].DisplayName;
+                        await channel.SendMessageAsync(
+                            $"🔒 **[セキュリティ]** {IdleRevertMinutes}分間操作が無かったため、このスレッドの使用モデルを自動的に **{defaultModelName}**（ローカル）に戻しました。クラウドモデルを使い続ける場合は `/model` で再度選択してください。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Warning] アイドル復帰通知の送信に失敗しました: {ex.Message}");
+                }
             }
         }
 
@@ -248,6 +313,20 @@ namespace DiscordAIBot
                 var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
                 await command.RespondAsync("👇 クラウドAIモデル(Gemini/Grok)のエフォートを選択してください（ローカルモデルには影響しません）:", components: builder.Build());
             }
+            else if (command.Data.Name == "prompt")
+            {
+                var menuBuilder = new SelectMenuBuilder()
+                    .WithPlaceholder("システムプロンプトを選択してください")
+                    .WithCustomId("prompt_select_menu");
+
+                foreach (var kvp in SystemPromptRegistry.AvailablePrompts)
+                {
+                    menuBuilder.AddOption(kvp.Value.DisplayName, kvp.Key, kvp.Value.Description);
+                }
+
+                var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
+                await command.RespondAsync("👇 使用するシステムプロンプトを選択してください（この場所での会話に適用されます）:", components: builder.Build());
+            }
         }
 
         private async Task SelectMenuExecutedAsync(SocketMessageComponent component)
@@ -271,6 +350,15 @@ namespace DiscordAIBot
                     _channelEfforts[contextId] = effort;
                     await component.RespondAsync($"✅ この場所でのエフォートを **{effort}** に変更しました。");
                 }
+            }
+            else if (component.Data.CustomId == "prompt_select_menu")
+            {
+                string selectedPromptId = component.Data.Values.First();
+                ulong contextId = component.Channel.Id;
+                _channelPrompts[contextId] = selectedPromptId;
+
+                string promptName = SystemPromptRegistry.AvailablePrompts[selectedPromptId].DisplayName;
+                await component.RespondAsync($"✅ この場所でのシステムプロンプトを **{promptName}** に変更しました。");
             }
         }
 
@@ -417,6 +505,9 @@ namespace DiscordAIBot
                 return;
             }
 
+            // クラウドモデル自動失効(アイドルタイマー)のための最終活動時刻を更新
+            _lastActivityAt[contextId] = DateTime.UtcNow;
+
             // 安全なフォールバックロジック (KeyNotFoundExceptionの完全防止)
             if (!_channelModels.TryGetValue(contextId, out string? targetModelId) || targetModelId == null || !ModelRegistry.AvailableModels.ContainsKey(targetModelId))
             {
@@ -428,7 +519,10 @@ namespace DiscordAIBot
 
             EffortLevel effort = _channelEfforts.TryGetValue(contextId, out var customEffort) ? customEffort : EffortLevel.Medium;
 
-            string systemPrompt = "優秀な創作アシスタントとして、ゲームのアイデア、コアループ、システム設計、企画書のブラッシュアップを支援してください。ステップバイステップで深く思考し、クリエイティブな提案を行ってください。";
+            string promptId = _channelPrompts.TryGetValue(contextId, out var customPromptId) && SystemPromptRegistry.AvailablePrompts.ContainsKey(customPromptId)
+                ? customPromptId
+                : SystemPromptRegistry.DefaultPromptId;
+            string systemPrompt = SystemPromptRegistry.AvailablePrompts[promptId].Prompt;
 
             if (targetModel.Provider == ApiProvider.LmStudio)
             {
