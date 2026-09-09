@@ -177,7 +177,18 @@ namespace DiscordAIBot
                 await db.SaveChangesAsync(cancellationToken);
 
                 var pinnedMsg = await thread.SendMessageAsync($"📄 このスレッドの記録: {webViewLink}");
-                await pinnedMsg.PinAsync();
+
+                // ピン留めの失敗(「メッセージの管理」権限不足等)は、Drive記録自体は
+                // 成功しているため区別してログに残す。DBレコードは既に保存済みなので
+                // ここで失敗してもファイル作成の再試行対象にはしない
+                try
+                {
+                    await pinnedMsg.PinAsync();
+                }
+                catch (Exception pinEx)
+                {
+                    Console.WriteLine($"[Warning] Drive記録リンクのピン留めに失敗しました(botに「メッセージの管理」権限が必要です): {pinEx.Message}");
+                }
             }
             catch (Exception ex)
             {
