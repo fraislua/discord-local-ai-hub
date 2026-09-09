@@ -198,6 +198,7 @@ namespace DiscordAIBot
             webBuilder.Services.AddMcpServer()
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.StatefulForInitializeClients)
                 .WithTools<AskTool>()
+                .WithTools<CompareModelsTool>()
                 .WithResources<ModelRegistryResource>();
 
             var webApp = webBuilder.Build();

@@ -122,6 +122,7 @@ claude mcp add --transport http discord-ai-hub http://<TailscaleのIP>:5100/mcp
 | ツール | 内容 |
 |---|---|
 | `ask(prompt, model?, session_id?, effort?, temperature?)` | 質問・軽いコード生成をAIモデルに投げ、応答テキストを返す。`session_id`省略時は毎回独立したリクエスト（履歴なし）、指定時はプロセスメモリ上の短期履歴（TTL20分）で会話を継続。`model`省略時はローカルの既定モデル、`/model`で選択可能なIDを指定すればクラウドモデルも使用可能。`effort`（思考の深さ）・`temperature`も指定可能。詳細な引数は[MCP_AGENT_GUIDE.md](./MCP_AGENT_GUIDE.md)を参照 |
+| `compare(prompt, models, effort?, temperature?)` | 同じプロンプトを複数モデル（`models`は配列）に順番に投げ、それぞれの応答をJSON配列で比較する。1モデルの失敗（無効なID・無料枠切れ・コンテキスト超過・呼び出しエラー）は他モデルの結果に影響しない（該当モデルの`error`フィールドに理由が入るのみ）。`session_id`には非対応（毎回独立したリクエスト）。data sharing前提のOpenAIモデルを含めるかどうかは`ask`と同様に呼び出し側の判断に委ねる（ツール側では除外しない） |
 
 MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合も、Discord経由と同じ`UsageRecords`
 テーブル・同じコスト計算式・同じOpenAI日次無料枠の事前ブロックロジックを共有します（実装の二重化なし）。
@@ -168,6 +169,7 @@ MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合�
 | `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-5.6 Sol/Terra/Luna） |
 | `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
 | `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
+| `CompareModelsTool.cs` | MCPサーバー機能の`compare`ツール。同じプロンプトを複数モデルに順番に投げ、部分失敗を許容しつつ結果をJSON配列で返す |
 | `ModelRegistryResource.cs` | MCPサーバー機能の`models://registry`リソース。`ModelRegistry.cs`からモデル一覧・コスト特性を動的に生成しJSONで公開 |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |
 | `AttachmentProcessor.cs` | 添付ファイル・画像の処理。メモリ保護機構を内包 |
