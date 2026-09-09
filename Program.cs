@@ -117,6 +117,19 @@ namespace DiscordAIBot
                         DriveFileLink TEXT NOT NULL,
                         CreatedAt TEXT NOT NULL
                     );");
+
+                // 利用経路(Discord/MCP)の可視化用カラムを追加(既存テーブルへの後付け)。
+                // マイグレーション機構を使わず起動時に毎回実行する既存方針を踏襲し、
+                // 2回目以降の起動では「列が既に存在する」エラーを無視して冪等にする
+                try
+                {
+                    await db.Database.ExecuteSqlRawAsync(
+                        "ALTER TABLE UsageRecords ADD COLUMN Source TEXT NOT NULL DEFAULT 'discord';");
+                }
+                catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column name"))
+                {
+                    // 既に追加済み(2回目以降の起動)
+                }
             }
             await TokenManager.InitializeAsync();
 
@@ -174,6 +187,7 @@ namespace DiscordAIBot
             // 注入する(実装を二重化しない。トークン使用量・レート制限の状態も自然に共有される)
             webBuilder.Services.AddSingleton(providerFactory);
             webBuilder.Services.AddSingleton<Func<string, Task<bool>>>(HasOpenAiBudgetAsync);
+            webBuilder.Services.AddSingleton<AskSessionStore>();
 
             // StatefulForInitializeClients: initialize handshakeを使う現行クライアントには
             // セッション付きで応答しつつ、将来のセッションレスプロトコル(2026-07-28以降)の

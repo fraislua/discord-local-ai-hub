@@ -24,6 +24,9 @@ namespace DiscordAIBot
         public int CompletionTokens { get; set; }
         public int ReasoningTokens { get; set; }
         public double EstimatedCostUsd { get; set; }
+        // 利用経路の可視化用("discord"/"mcp")。既存コード(ChatOrchestrator)は未指定のまま
+        // Addするため、デフォルト値により後方互換で"discord"扱いになる
+        public string Source { get; set; } = "discord";
     }
 
     // スレッド(セッション)ごとに紐づくGoogle Drive上の会話記録ファイル
