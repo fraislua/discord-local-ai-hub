@@ -109,6 +109,7 @@ AIモデルに直接投げられます。
 - エンドポイント: `<McpListenUrl>/mcp`（例: `http://100.x.x.x:5100/mcp`）
 - ヘルスチェック: `<McpListenUrl>/health`
 - 前提: api-relay(このシステムを動かすホスト)・接続元の両方が同じTailnetに参加していること
+- 接続する側のAIエージェント(Claude Code等)向けの使い方は[MCP_AGENT_GUIDE.md](./MCP_AGENT_GUIDE.md)を参照
 
 ### 接続方法（Claude Code側）
 
