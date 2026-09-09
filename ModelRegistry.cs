@@ -20,6 +20,9 @@ namespace DiscordAIBot
         public string Description { get; init; }
         public bool IsVlm { get; init; }
         public ApiProvider Provider { get; init; }
+        // /effortコマンドで選択可能なエフォート段階(実機検証済みの値のみ)。
+        // 未指定(null)の場合はProgram.cs側でLow/Medium/Highの3段階にフォールバックする
+        public IReadOnlyList<EffortLevel>? SupportedEfforts { get; init; }
     }
 
     public static class ModelRegistry
@@ -80,7 +83,8 @@ namespace DiscordAIBot
                     MaxOutputTokens = 8192,
                     Description = "高速・長文脈モデル (Vertex AI)",
                     IsVlm = true,
-                    Provider = ApiProvider.VertexGemini
+                    Provider = ApiProvider.VertexGemini,
+                    SupportedEfforts = new[] { EffortLevel.Low, EffortLevel.Medium, EffortLevel.High }
                 }
             },
             {
@@ -93,7 +97,9 @@ namespace DiscordAIBot
                     MaxOutputTokens = 8192,
                     Description = "xAI Grok (Vertex AI)",
                     IsVlm = false,
-                    Provider = ApiProvider.VertexGrok
+                    Provider = ApiProvider.VertexGrok,
+                    // Noneは実機検証済みの"minimal"にマップ(026)。XHigh/Maxは実機で拒否済みのため含めない
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High }
                 }
             },
             {
@@ -106,7 +112,9 @@ namespace DiscordAIBot
                     MaxOutputTokens = 8192,
                     Description = "OpenAI最上位モデル (無料枠 25万トークン/日)",
                     IsVlm = true,
-                    Provider = ApiProvider.OpenAi
+                    Provider = ApiProvider.OpenAi,
+                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             },
             {
@@ -119,7 +127,9 @@ namespace DiscordAIBot
                     MaxOutputTokens = 8192,
                     Description = "OpenAIバランス型モデル (無料枠 250万トークン/日、Lunaと共有)",
                     IsVlm = true,
-                    Provider = ApiProvider.OpenAi
+                    Provider = ApiProvider.OpenAi,
+                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             },
             {
@@ -132,7 +142,9 @@ namespace DiscordAIBot
                     MaxOutputTokens = 8192,
                     Description = "OpenAI高速・低コストモデル (無料枠 250万トークン/日、Terraと共有)",
                     IsVlm = true,
-                    Provider = ApiProvider.OpenAi
+                    Provider = ApiProvider.OpenAi,
+                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             }
         };

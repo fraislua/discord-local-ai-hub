@@ -81,10 +81,15 @@ namespace DiscordAIBot
                 messages.Add(new OpenAiMessageDto("user", request.CurrentUserText));
             }
 
+            // 実機検証済み(2026-09-09): none/low/medium/high/xhighの5段階は
+            // Sol/Terra/Luna全モデル共通で受理される。maxのみ400で拒否される
+            // (モデル仕様ページの記載はmaxまで対応と誤っていた)
             string reasoningEffort = request.Effort switch
             {
+                EffortLevel.None => "none",
                 EffortLevel.Low => "low",
                 EffortLevel.High => "high",
+                EffortLevel.XHigh => "xhigh",
                 _ => "medium"
             };
 

@@ -126,10 +126,14 @@ namespace DiscordAIBot
                 );
             }
 
+            // GeminiのthinkingLevelはLOW/MEDIUM/HIGHの3段階のみ(026で実機確認済み)。
+            // Noneは下限のLOWに、XHighは上限のHIGHにクランプする
             string thinkingLevel = request.Effort switch
             {
+                EffortLevel.None => "LOW",
                 EffortLevel.Low => "LOW",
                 EffortLevel.High => "HIGH",
+                EffortLevel.XHigh => "HIGH",
                 _ => "MEDIUM"
             };
 

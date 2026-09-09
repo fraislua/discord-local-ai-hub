@@ -344,6 +344,17 @@ namespace DiscordAIBot
             return usedToday + reserve <= pool.Value.Cap;
         }
 
+        // /effortの選択メニュー用の日本語ラベル・説明文
+        private static (string Label, string Description) GetEffortDisplay(EffortLevel level) => level switch
+        {
+            EffortLevel.None => ("なし", "思考せず即座に応答。最速・最安（対応モデルのみ）"),
+            EffortLevel.Low => ("低", "応答速度重視。日常会話向け"),
+            EffortLevel.Medium => ("中（デフォルト）", "バランス型"),
+            EffortLevel.High => ("高", "複雑な問題向け。処理時間が長くなります"),
+            EffortLevel.XHigh => ("最高", "非常に複雑な問題向け。処理時間・コストが大幅に増加（対応モデルのみ）"),
+            _ => (level.ToString(), "")
+        };
+
         private async Task SlashCommandHandlerAsync(SocketSlashCommand command)
         {
             if (command.Data.Name == "model")
@@ -362,15 +373,29 @@ namespace DiscordAIBot
             }
             else if (command.Data.Name == "effort")
             {
+                ulong contextId = command.Channel.Id;
+                string currentModelId = _channelModels.TryGetValue(contextId, out var cm) && ModelRegistry.AvailableModels.ContainsKey(cm)
+                    ? cm
+                    : ModelRegistry.DefaultModelId;
+                var currentModel = ModelRegistry.AvailableModels[currentModelId];
+
+                // モデルごとに実際に対応するエフォート段階だけを表示する(未指定モデルは
+                // 従来通りLow/Medium/Highの3段階にフォールバック)
+                IReadOnlyList<EffortLevel> supportedEfforts = currentModel.SupportedEfforts
+                    ?? new[] { EffortLevel.Low, EffortLevel.Medium, EffortLevel.High };
+
                 var menuBuilder = new SelectMenuBuilder()
                     .WithPlaceholder("エフォートを選択してください")
-                    .WithCustomId("effort_select_menu")
-                    .AddOption("低", EffortLevel.Low.ToString(), "応答速度重視。日常会話向け")
-                    .AddOption("中（デフォルト）", EffortLevel.Medium.ToString(), "バランス型")
-                    .AddOption("高", EffortLevel.High.ToString(), "複雑な問題向け。処理時間が長くなります");
+                    .WithCustomId("effort_select_menu");
+
+                foreach (var level in supportedEfforts)
+                {
+                    var (label, description) = GetEffortDisplay(level);
+                    menuBuilder.AddOption(label, level.ToString(), description);
+                }
 
                 var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
-                await command.RespondAsync("👇 クラウドAIモデル(Gemini/Grok)のエフォートを選択してください（ローカルモデルには影響しません）:", components: builder.Build());
+                await command.RespondAsync($"👇 `{currentModel.DisplayName}`のエフォートを選択してください（この場所での会話に適用されます。ローカルモデルには影響しません）:", components: builder.Build());
             }
             else if (command.Data.Name == "prompt")
             {

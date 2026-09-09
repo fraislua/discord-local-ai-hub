@@ -58,13 +58,15 @@ namespace DiscordAIBot
 
             messages.Add(new GrokMessageDto("user", request.CurrentUserText));
 
-            // 実機検証済み: Vertex経由で受理される値は low/medium/high の3種
+            // 実機検証済み: Vertex経由で受理される値は minimal/low/medium/high の4種
             // (xAI公式ドキュメント記載のxhigh、Vertexのエラーメッセージが例示するmaxは
-            // いずれも実際には拒否される)
+            // いずれも実際には拒否される)。XHighはHighにクランプする
             string reasoningEffort = request.Effort switch
             {
+                EffortLevel.None => "minimal",
                 EffortLevel.Low => "low",
                 EffortLevel.High => "high",
+                EffortLevel.XHigh => "high",
                 _ => "medium"
             };
 

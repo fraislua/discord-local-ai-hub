@@ -15,12 +15,17 @@ namespace DiscordAIBot
         }
     }
 
-    // クラウドモデルの思考(reasoning)の深さ。ローカルモデル(LmStudioProvider)は無視する
+    // クラウドモデルの思考(reasoning)の深さ。ローカルモデル(LmStudioProvider)は無視する。
+    // 実際に対応する段階数はモデルごとに異なる(ModelRegistry.SupportedEffortsで定義)。
+    // 対応しない段階が指定された場合、各Providerが自身の対応範囲にクランプする
+    // (例: Gemini/GrokはXHighに非対応のためHighにクランプ)
     public enum EffortLevel
     {
+        None,
         Low,
         Medium,
-        High
+        High,
+        XHigh
     }
 
     // 正規化済みリクエスト
