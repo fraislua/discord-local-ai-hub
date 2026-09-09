@@ -1,12 +1,12 @@
 # Discord統合パーソナルAI推論システム
 
-Discordをフロントエンドとして、自宅のローカルLLM（LM Studio）とクラウドAI（Vertex AI経由のGemini・Grok）を切り替えて利用できる自分専用のAIチャットシステムです。
+Discordをフロントエンドとして、自宅のローカルLLM（LM Studio）とクラウドAI（Vertex AI経由のGemini・Grok、OpenAI）を切り替えて利用できる自分専用のAIチャットシステムです。同一プロセス内で、Tailscale経由のMCPサーバー機能（Claude Code等からの直接呼び出し）も提供します。
 
-24時間稼働のミニPC（Proxmox LXC: 1コア / RAM 1GB）上でBotを常時稼働させ、重い推論処理はデスクトップPC上のLM Studio、またはクラウドAPIへルーティングする3層構成になっています。
+24時間稼働のミニPC（Proxmox LXC: 2コア / RAM 1GB）上でBotを常時稼働させ、重い推論処理はデスクトップPC上のLM Studio、またはクラウドAPIへルーティングする3層構成になっています。
 
 ```
-[Discord] ⇄ [ミニPC: Discord Bot (中継サーバー)] ⇄ [デスクトップPC: LM Studio]
-                                               ⇄ [Vertex AI (Gemini / Grok)]
+[Discord]     ⇄ [ミニPC: Discord Bot (中継サーバー)] ⇄ [デスクトップPC: LM Studio]
+[Claude Code] ⇄ [       ↑ 同一プロセス、MCPサーバー]  ⇄ [Vertex AI (Gemini / Grok) / OpenAI]
 ```
 
 ## 主な機能
@@ -49,6 +49,7 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
 - LM Studio（デスクトップPC側でサーバーモード起動。モデルの自動ロード/切替に対応 — 詳細は「注意事項」参照）
 - Google Cloudプロジェクト（Vertex AI API有効化済み、ADC(Application Default Credentials)のJSON認証情報）
 - Google AI Studio APIキー（現在は割り当てモデル無し。将来的な復帰用に設定項目のみ残置）
+- Tailscale（MCPサーバー機能を使う場合。ホスト・接続元の両方が同一Tailnetに参加している必要あり）
 
 ### 依存ライブラリ（NuGet）
 
@@ -57,6 +58,7 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
 - SixLabors.ImageSharp
 - Tokenizers.HuggingFace
 - Google.Apis.Auth
+- ModelContextProtocol / ModelContextProtocol.AspNetCore
 
 ## セットアップ
 
@@ -78,6 +80,7 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
    | `VertexProjectId` | Vertex AIを呼び出すGoogle CloudプロジェクトID |
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
    | `OpenAiApiKey` | OpenAI APIキー（GPT-5.6 Sol/Terra/Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
+   | `McpListenUrl` | MCPサーバー(Kestrel)の待受URL。**Tailscale IPを明示的に指定すること**（例: `http://100.x.x.x:5100`）。`0.0.0.0`を指定するとLAN内からもアクセス可能になるため使用しないこと |
 
 3. トークン数カウント用に、使用モデル（Gemma 4）の `tokenizer.json` を実行ファイルと同じディレクトリに配置します（Hugging Faceのモデルページから入手できます。未配置の場合は文字数ベースの概算モードで動作します）。
 
@@ -96,6 +99,40 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
 - 生成中は「🛑 生成を停止」ボタンでいつでも中断できます
 - ファイルや画像をドラッグ＆ドロップで添付すると、内容を読み込んで回答します
 
+## MCPサーバー機能
+
+Discord bot機能と同一プロセス内で、[MCP (Model Context Protocol)](https://modelcontextprotocol.io/) の
+Streamable HTTPサーバーを提供します（`ModelContextProtocol.AspNetCore`公式SDK使用）。同じTailnet
+（Tailscale VPN）内の他端末で動くClaude Codeなどから、単発の質問・軽いコード生成をこのシステム経由の
+AIモデルに直接投げられます。
+
+- エンドポイント: `<McpListenUrl>/mcp`（例: `http://100.x.x.x:5100/mcp`）
+- ヘルスチェック: `<McpListenUrl>/health`
+- 前提: api-relay(このシステムを動かすホスト)・接続元の両方が同じTailnetに参加していること
+
+### 接続方法（Claude Code側）
+
+```bash
+claude mcp add --transport http discord-ai-hub http://<TailscaleのIP>:5100/mcp
+```
+
+### 提供ツール
+
+| ツール | 内容 |
+|---|---|
+| `ask(prompt, model?)` | 単発の質問・軽いコード生成をAIモデルに投げ、応答テキストを1回だけ返す。会話履歴は保持されない（呼び出しごとに独立したリクエスト）。`model`省略時はローカルの既定モデル、`/model`で選択可能なIDを指定すればクラウドモデルも使用可能 |
+
+MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合も、Discord経由と同じ`UsageRecords`
+テーブル・同じコスト計算式・同じOpenAI日次無料枠の事前ブロックロジックを共有します（実装の二重化なし）。
+
+### セキュリティ
+
+- Kestrelは`McpListenUrl`で指定したTailscale IPにのみバインド（`0.0.0.0`は使用しない。LAN内からのアクセスを防ぐため）
+- Tailscale自体がインストール時に自動設定するiptables統合（`ts-input`チェーン）により、Tailscale
+  インターフェース以外から届くTailscale CGNATレンジ(`100.64.0.0/10`)宛のパケットはポートを問わず
+  ドロップされる（`iptables -L ts-input -n -v`で確認可能）。バインドアドレス制限と合わせた多層防御
+- アプリケーションレベルの認証(トークン等)は現状未実装。Tailnet内は信頼済みの端末のみという前提
+
 ## ファイル構成
 
 | ファイル | 役割 |
@@ -110,6 +147,7 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
 | `VertexGrokProvider.cs` | Vertex AIのOpenAI互換エンドポイント経由のGrok通信 |
 | `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-5.6 Sol/Terra/Luna） |
 | `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
+| `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |
 | `AttachmentProcessor.cs` | 添付ファイル・画像の処理。メモリ保護機構を内包 |
 | `TokenManager.cs` | トークナイザーによるトークン数カウント（シングルトン） |
