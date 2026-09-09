@@ -361,11 +361,16 @@ namespace DiscordAIBot
                 .SumAsync(u => u.EstimatedCostUsd);
         }
 
-        // OpenAIデータ共有プログラムの日次無料枠、当日(JST暦日)の該当プール累計消費量
+        // OpenAIデータ共有プログラムの日次無料枠、当日(UTC暦日)の該当プール累計消費量。
+        // OpenAI公式ドキュメントには本プログラム専用の明記が無いが、コミュニティ情報
+        // ("rollover day-to-day is 00:00 UTC")およびOpenAIスタッフによる関連レート制限
+        // ("Our billing cycle is based on UTC time.")から、UTC深夜0時リセットと判断。
+        // 従来JST深夜0時を起点にしていたが、それだとOpenAI側の実リセット(推定UTC0時=JST9時)
+        // より9時間早く自己リセットしてしまい、その間に無料枠超過の請求が発生しうる誤差が
+        // あったため修正
         private async Task<int> GetOpenAiPoolUsageTodayAsync(IReadOnlyList<string> poolModelIds)
         {
-            DateTime nowJst = DateTime.UtcNow.AddHours(9);
-            DateTime startOfDayUtc = new DateTime(nowJst.Year, nowJst.Month, nowJst.Day, 0, 0, 0, DateTimeKind.Utc).AddHours(-9);
+            DateTime startOfDayUtc = DateTime.UtcNow.Date;
 
             using var db = new ChatDbContext();
             return await db.UsageRecords
