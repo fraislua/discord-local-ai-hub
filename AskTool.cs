@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -80,15 +82,21 @@ namespace DiscordAIBot
         private readonly Func<ApiProvider, IAiProvider> _providerFactory;
         private readonly Func<string, Task<bool>> _hasOpenAiBudgetAsync;
         private readonly AskSessionStore _sessionStore;
+        private readonly ILogger<AskTool> _logger;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         public AskTool(
             Func<ApiProvider, IAiProvider> providerFactory,
             Func<string, Task<bool>> hasOpenAiBudgetAsync,
-            AskSessionStore sessionStore)
+            AskSessionStore sessionStore,
+            ILogger<AskTool> logger,
+            IHttpContextAccessor httpContextAccessor)
         {
             _providerFactory = providerFactory;
             _hasOpenAiBudgetAsync = hasOpenAiBudgetAsync;
             _sessionStore = sessionStore;
+            _logger = logger;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         [McpServerTool, Description("質問・軽いコード生成をAIモデルに投げ、応答テキストを返します。session_id省略時は毎回独立したリクエスト(履歴なし)。session_idを指定すると、同じIDでの呼び出し間で直前までの会話を踏まえて応答します(有効期限20分、サーバー再起動でも消える使い捨ての短期履歴)。")]
@@ -101,7 +109,16 @@ namespace DiscordAIBot
             IProgress<ProgressNotificationValue> progress,
             CancellationToken cancellationToken)
         {
+            var callStopwatch = Stopwatch.StartNew();
+            string callerIp = _httpContextAccessor.HttpContext?.Connection?.RemoteIpAddress?.ToString() ?? "unknown";
             string modelId = string.IsNullOrWhiteSpace(model) ? ModelRegistry.DefaultModelId : model;
+
+            // 呼び出し元(Tailscale IP)・session_id・モデルを記録。Tailscale限定バインドで
+            // ネットワークレベルの信頼はあるが、「どの端末から」呼ばれたかはこれまで未記録
+            // だったため、コスト記録(UsageRecords)を補完する形で構造化ログとして残す
+            _logger.LogInformation(
+                "MCP ask 開始: caller={CallerIp} session={SessionId} model={ModelId} effort={Effort} promptChars={PromptChars}",
+                callerIp, session_id ?? "(none)", modelId, effort ?? "(default)", prompt.Length);
 
             if (!ModelRegistry.AvailableModels.TryGetValue(modelId, out var modelMeta))
             {
@@ -224,6 +241,10 @@ namespace DiscordAIBot
                     await db.SaveChangesAsync(cancellationToken);
                 }
             }
+
+            _logger.LogInformation(
+                "MCP ask 完了: caller={CallerIp} session={SessionId} model={ModelId} durationMs={DurationMs} promptTokens={PromptTokens} completionTokens={CompletionTokens}",
+                callerIp, session_id ?? "(none)", modelMeta.ModelId, callStopwatch.ElapsedMilliseconds, promptTokens, completionTokens);
 
             return answer;
         }

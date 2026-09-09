@@ -188,6 +188,8 @@ namespace DiscordAIBot
             webBuilder.Services.AddSingleton(providerFactory);
             webBuilder.Services.AddSingleton<Func<string, Task<bool>>>(HasOpenAiBudgetAsync);
             webBuilder.Services.AddSingleton<AskSessionStore>();
+            // 呼び出し元(Tailscale IP)をAskTool内でログ記録するために必要
+            webBuilder.Services.AddHttpContextAccessor();
 
             // StatefulForInitializeClients: initialize handshakeを使う現行クライアントには
             // セッション付きで応答しつつ、将来のセッションレスプロトコル(2026-07-28以降)の
