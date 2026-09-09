@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.AspNetCore;
 
 namespace DiscordAIBot
 {
@@ -161,14 +163,23 @@ namespace DiscordAIBot
             await _client.LoginAsync(TokenType.Bot, _discordToken);
             await _client.StartAsync();
 
-            // MCPサーバー機能(Step 1: 疎通確認・RAM実測用のKestrel導入のみ、ツール未実装)。
+            // MCPサーバー機能(Step 2: MCP SDK組み込み、接続疎通確認用。ツール本体は未実装)。
             // McpListenUrlはTailscale IPのみを指す想定(例: http://100.x.x.x:5100)。
             // 0.0.0.0で待ち受けるとLAN内からもアクセス可能になるため、appsettings.json側で
             // Tailscale IP限定のURLを設定する運用とする
             var webBuilder = WebApplication.CreateBuilder();
             webBuilder.WebHost.UseUrls(_mcpListenUrl);
+
+            // StatefulForInitializeClients: initialize handshakeを使う現行クライアントには
+            // セッション付きで応答しつつ、将来のセッションレスプロトコル(2026-07-28以降)の
+            // クライアントも同一エンドポイントで受け付けられるようにする(単一プロセス構成
+            // のためセッションアフィニティは問題にならない)
+            webBuilder.Services.AddMcpServer()
+                .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.StatefulForInitializeClients);
+
             var webApp = webBuilder.Build();
             webApp.MapGet("/health", () => Results.Ok("ok"));
+            webApp.MapMcp("/mcp");
 
             await webApp.RunAsync();
         }
