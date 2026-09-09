@@ -20,11 +20,13 @@ namespace DiscordAIBot
 
         private ChatOrchestrator _orchestrator = null!;
         private string _discordToken = string.Empty;
-        private string _lmStudioEndpoint = string.Empty; 
+        private string _lmStudioEndpoint = string.Empty;
         private string _geminiApiKey = string.Empty;
+        private string _googleAdcCredentialPath = string.Empty;
+        private string _vertexProjectId = string.Empty;
+        private string _vertexRegion = string.Empty;
 
         private ulong _chatAiChannelId;
-        private ulong _unityAgentChannelId;
 
         static async Task Main(string[] args) => await new Program().MainAsync();
 
@@ -40,9 +42,11 @@ namespace DiscordAIBot
                 _discordToken = config["BotSettings:Token"] ?? throw new Exception("Tokenが設定されていません。");
                 _lmStudioEndpoint = config["BotSettings:LmStudioEndpoint"] ?? throw new Exception("LmStudioEndpointが設定されていません。");
                 _geminiApiKey = config["BotSettings:GeminiApiKey"] ?? throw new Exception("GeminiApiKeyが設定されていません。");
+                _googleAdcCredentialPath = config["BotSettings:GoogleAdcCredentialPath"] ?? throw new Exception("GoogleAdcCredentialPathが設定されていません。");
+                _vertexProjectId = config["BotSettings:VertexProjectId"] ?? throw new Exception("VertexProjectIdが設定されていません。");
+                _vertexRegion = config["BotSettings:VertexRegion"] ?? throw new Exception("VertexRegionが設定されていません。");
 
-                if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId) ||
-                    !ulong.TryParse(config["BotSettings:UnityAgentChannelId"], out _unityAgentChannelId))
+                if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId))
                 {
                     throw new Exception("チャンネルIDの形式が不正か、設定されていません。");
                 }
@@ -50,7 +54,7 @@ namespace DiscordAIBot
             catch (Exception ex)
             {
                 Console.WriteLine($"[エラー] 設定ファイルの読み込みに失敗しました。\n詳細: {ex.Message}");
-                return; 
+                return;
             }
 
             using (var db = new ChatDbContext())
@@ -66,7 +70,7 @@ namespace DiscordAIBot
 
             _client = new DiscordSocketClient(discordConfig);
             _client.Log += LogAsync;
-            
+
             _client.Ready += Client_ReadyAsync;
             _client.MessageReceived += MessageReceivedAsync;
             _client.ButtonExecuted += ButtonExecutedAsync;
@@ -78,16 +82,22 @@ namespace DiscordAIBot
             IAiProvider lmStudioProvider = new LmStudioProvider(_httpClient, _lmStudioEndpoint);
             IAiProvider googleAiProvider = new GoogleAiStudioProvider(_httpClient, _geminiApiKey);
 
+            var googleAdcTokenProvider = new GoogleAdcTokenProvider(_googleAdcCredentialPath);
+            IAiProvider vertexGeminiProvider = new VertexGeminiProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
+            IAiProvider vertexGrokProvider = new VertexGrokProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
+
             Func<ApiProvider, IAiProvider> providerFactory = providerType => providerType switch
             {
                 ApiProvider.LmStudio => lmStudioProvider,
                 ApiProvider.GoogleAiStudio => googleAiProvider,
+                ApiProvider.VertexGemini => vertexGeminiProvider,
+                ApiProvider.VertexGrok => vertexGrokProvider,
                 _ => throw new ArgumentException($"未対応のプロバイダーです: {providerType}")
             };
 
             var attachmentProcessor = new AttachmentProcessor(_httpClient);
             var streamHandler = new StreamResponseHandler();
-            
+
             _orchestrator = new ChatOrchestrator(providerFactory, attachmentProcessor, streamHandler);
 
             await _client.LoginAsync(TokenType.Bot, _discordToken);
@@ -107,7 +117,7 @@ namespace DiscordAIBot
             var slashCommand = new SlashCommandBuilder()
                 .WithName("model")
                 .WithDescription("このチャンネル・スレッドで使用するAIモデルを選択します。");
-            
+
             try
             {
                 await _client.CreateGlobalApplicationCommandAsync(slashCommand.Build());
@@ -143,7 +153,7 @@ namespace DiscordAIBot
                 string selectedModelId = component.Data.Values.First();
                 ulong contextId = component.Channel.Id;
                 _channelModels[contextId] = selectedModelId;
-                
+
                 string modelName = ModelRegistry.AvailableModels[selectedModelId].DisplayName;
                 await component.RespondAsync($"✅ この場所での使用モデルを **{modelName}** に変更しました。");
             }
@@ -183,7 +193,7 @@ namespace DiscordAIBot
 
             ulong logicalChannelId = (userMessage.Channel is SocketThreadChannel t) ? t.ParentChannel.Id : userMessage.Channel.Id;
 
-            if (logicalChannelId != _chatAiChannelId && logicalChannelId != _unityAgentChannelId) return;
+            if (logicalChannelId != _chatAiChannelId) return;
 
             SocketThreadChannel targetThread;
             ulong contextId;
@@ -195,9 +205,7 @@ namespace DiscordAIBot
             }
             else if (userMessage.Channel is SocketTextChannel textChannel)
             {
-                string parentModelId = (logicalChannelId == _unityAgentChannelId) 
-                    ? ModelRegistry.DefaultModelId 
-                    : ModelRegistry.ChatAiDefaultModelId;
+                string parentModelId = ModelRegistry.DefaultModelId;
 
                 if (_channelModels.TryGetValue(textChannel.Id, out string? customParentModelId) && customParentModelId != null)
                 {
@@ -206,32 +214,30 @@ namespace DiscordAIBot
 
                 string threadTitle = userMessage.Content.Length > 20 ? userMessage.Content.Substring(0, 20) + "..." : userMessage.Content;
                 if (string.IsNullOrWhiteSpace(threadTitle)) threadTitle = "AI対話セッション";
-                
+
                 targetThread = await textChannel.CreateThreadAsync(
                     name: threadTitle,
                     autoArchiveDuration: ThreadArchiveDuration.OneDay,
                     message: userMessage);
-                
+
                 contextId = targetThread.Id;
-                _channelModels.TryAdd(contextId, parentModelId); 
+                _channelModels.TryAdd(contextId, parentModelId);
             }
             else
             {
-                return; 
+                return;
             }
 
             // 安全なフォールバックロジック (KeyNotFoundExceptionの完全防止)
             if (!_channelModels.TryGetValue(contextId, out string? targetModelId) || targetModelId == null || !ModelRegistry.AvailableModels.ContainsKey(targetModelId))
             {
-                targetModelId = (logicalChannelId == _unityAgentChannelId) ? ModelRegistry.DefaultModelId : ModelRegistry.ChatAiDefaultModelId;
-                _channelModels[contextId] = targetModelId; 
+                targetModelId = ModelRegistry.DefaultModelId;
+                _channelModels[contextId] = targetModelId;
             }
-            
+
             var targetModel = ModelRegistry.AvailableModels[targetModelId];
 
-            string systemPrompt = (logicalChannelId == _unityAgentChannelId)
-                ? "プロのゲームプランナー・プログラマーとして、Unityでの実装を前提に回答してください。非同期処理にはUniTask、アニメーションにはDOTween、リアクティブシステムにはUniRxを用い、パフォーマンスの最適化とライフサイクル管理を意識した完全なコードを出力してください。"
-                : "優秀な創作アシスタントとして、ゲームのアイデア、コアループ、システム設計、企画書のブラッシュアップを支援してください。ステップバイステップで深く思考し、クリエイティブな提案を行ってください。";
+            string systemPrompt = "優秀な創作アシスタントとして、ゲームのアイデア、コアループ、システム設計、企画書のブラッシュアップを支援してください。ステップバイステップで深く思考し、クリエイティブな提案を行ってください。";
 
             if (targetModel.Provider == ApiProvider.LmStudio)
             {
@@ -264,7 +270,7 @@ namespace DiscordAIBot
                     await _orchestrator.ProcessUserMessageAsync(
                         userMessage,
                         statusMsg,
-                        contextId, 
+                        contextId,
                         targetModel,
                         systemPrompt,
                         cts.Token
@@ -274,36 +280,36 @@ namespace DiscordAIBot
                 {
                     if (!cts.IsCancellationRequested)
                     {
-                        await statusMsg.ModifyAsync(m => 
-                        { 
-                            m.Content = "⚠️ AIサーバーからの応答がタイムアウト（通信切断）しました。"; 
-                            m.Components = null; 
+                        await statusMsg.ModifyAsync(m =>
+                        {
+                            m.Content = "⚠️ AIサーバーからの応答がタイムアウト（通信切断）しました。";
+                            m.Components = null;
                         });
                     }
                 }
                 catch (AiRateLimitException)
                 {
-                    await statusMsg.ModifyAsync(m => 
-                    { 
-                        m.Content = "❌ **[通信失敗]** APIのリクエスト制限（429 Too Many Requests）に達しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。"; 
-                        m.Components = null; 
+                    await statusMsg.ModifyAsync(m =>
+                    {
+                        m.Content = "❌ **[通信失敗]** APIのリクエスト制限（429 Too Many Requests）に達しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。";
+                        m.Components = null;
                     });
                 }
                 catch (HttpRequestException ex) when (ex.Message.Contains("429") || ex.Message.Contains("Too Many Requests"))
                 {
                     // LmStudio等の他のプロバイダー起因の429エラーをキャッチするためのフォールバック
-                    await statusMsg.ModifyAsync(m => 
-                    { 
-                        m.Content = "❌ **[通信失敗]** APIのリクエスト制限（429 Too Many Requests）に達しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。"; 
-                        m.Components = null; 
+                    await statusMsg.ModifyAsync(m =>
+                    {
+                        m.Content = "❌ **[通信失敗]** APIのリクエスト制限（429 Too Many Requests）に達しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。";
+                        m.Components = null;
                     });
                 }
                 catch (Exception ex)
                 {
-                    await statusMsg.ModifyAsync(m => 
-                    { 
-                        m.Content = $"❌ **[通信失敗]** ローカルAIが未起動、または予期せぬエラーが発生しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。\n*(詳細: {ex.Message})*"; 
-                        m.Components = null; 
+                    await statusMsg.ModifyAsync(m =>
+                    {
+                        m.Content = $"❌ **[通信失敗]** ローカルAIが未起動、または予期せぬエラーが発生しました。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。\n*(詳細: {ex.Message})*";
+                        m.Components = null;
                     });
                 }
                 finally
@@ -325,7 +331,7 @@ namespace DiscordAIBot
                 {
                     if (_activeGenerations.TryGetValue(contextId, out var cts))
                     {
-                        cts.Cancel(); 
+                        cts.Cancel();
                         await component.RespondAsync("🛑 生成停止シグナルを送信しました。", ephemeral: true);
                     }
                     else

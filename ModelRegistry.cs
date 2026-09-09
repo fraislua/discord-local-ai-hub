@@ -2,10 +2,12 @@ using System.Collections.Generic;
 
 namespace DiscordAIBot
 {
-    public enum ApiProvider 
-    { 
-        LmStudio, 
-        GoogleAiStudio 
+    public enum ApiProvider
+    {
+        LmStudio,
+        GoogleAiStudio, // 当面残置（現在は未使用のモデルエントリ無し）
+        VertexGemini,
+        VertexGrok
     }
 
     public struct ModelMetadata
@@ -13,57 +15,82 @@ namespace DiscordAIBot
         public string DisplayName { get; init; }
         public string ModelId { get; init; }
         public int ContextWindow { get; init; }
-        public int MaxOutputTokens { get; init; } 
-        public string Description { get; init; } 
-        public bool IsVlm { get; init; } 
-        public ApiProvider Provider { get; init; } 
+        public int MaxOutputTokens { get; init; }
+        public string Description { get; init; }
+        public bool IsVlm { get; init; }
+        public ApiProvider Provider { get; init; }
     }
 
     public static class ModelRegistry
     {
-        // プロンプトエンジニアリング・Unity実装など、用途ごとのデフォルトモデル定数
-        public const string DefaultModelId = "google/gemma-4-12b-qat";
-        public const string ChatAiDefaultModelId = "gemini-3.5-flash";
+        // チャンネル統合に伴い、Unity/雑談で分かれていたデフォルトモデル定数を1本化
+        public const string DefaultModelId = "gemini-3.8-flash";
 
         public static readonly Dictionary<string, ModelMetadata> AvailableModels = new()
         {
             {
-                "google/gemma-4-12b-qat", 
-                new ModelMetadata 
-                { 
-                    DisplayName = "Gemma-4-12B-VLM", 
-                    ModelId = "google/gemma-4-12b-qat", 
-                    ContextWindow = 32768, 
-                    MaxOutputTokens = -1, 
-                    Description = "デフォルトモデル (画像対応 / ローカル推論)", 
+                "google/gemma-4-12b-qat",
+                new ModelMetadata
+                {
+                    DisplayName = "Gemma-4-12B-VLM",
+                    ModelId = "google/gemma-4-12b-qat",
+                    ContextWindow = 32768,
+                    MaxOutputTokens = -1,
+                    Description = "デフォルトモデル (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
             },
             {
-                "gemma-4-26b-a4b-it", 
-                new ModelMetadata 
-                { 
-                    DisplayName = "Gemma-4-26B-A4B", 
-                    ModelId = "gemma-4-26b-a4b-it", 
-                    ContextWindow = 65536, 
-                    MaxOutputTokens = -1, 
-                    Description = "高精度-低速推論 (ローカル推論)", 
+                "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+                new ModelMetadata
+                {
+                    DisplayName = "Gemma-4-E4B-Uncensored",
+                    ModelId = "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+                    ContextWindow = 131072,
+                    MaxOutputTokens = -1,
+                    Description = "フィルタ緩和モデル (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio
+                }
+            },
+            {
+                "qwen/qwen3.8-27b",
+                new ModelMetadata
+                {
+                    DisplayName = "Qwen3.8-27B",
+                    ModelId = "qwen/qwen3.8-27b",
+                    ContextWindow = 262144,
+                    MaxOutputTokens = -1,
+                    Description = "高精度-低速推論 (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio
+                }
+            },
+            {
+                "gemini-3.8-flash",
+                new ModelMetadata
+                {
+                    DisplayName = "Gemini 3.8 Flash",
+                    ModelId = "gemini-3.8-flash",
+                    ContextWindow = 1048576,
+                    MaxOutputTokens = 8192,
+                    Description = "高速・長文脈モデル (Vertex AI)",
+                    IsVlm = true,
+                    Provider = ApiProvider.VertexGemini
+                }
+            },
+            {
+                "xai/grok-4.6",
+                new ModelMetadata
+                {
+                    DisplayName = "Grok 4.6",
+                    ModelId = "xai/grok-4.6",
+                    ContextWindow = 500000,
+                    MaxOutputTokens = 8192,
+                    Description = "xAI Grok (Vertex AI)",
                     IsVlm = false,
-                    Provider = ApiProvider.LmStudio
-                }
-            },
-            {
-                "gemini-3.5-flash", 
-                new ModelMetadata 
-                { 
-                    DisplayName = "Gemini 3.5 Flash", 
-                    ModelId = "gemini-3.5-flash", 
-                    ContextWindow = 1048576, 
-                    MaxOutputTokens = 8192, 
-                    Description = "高速・長文脈モデル (Google AI Studio)", 
-                    IsVlm = true,
-                    Provider = ApiProvider.GoogleAiStudio
+                    Provider = ApiProvider.VertexGrok
                 }
             }
         };
