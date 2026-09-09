@@ -32,6 +32,22 @@ namespace DiscordAIBot
         private bool _usageTopicUpdaterStarted = false;
         private double _lastDisplayedCostUsd = -1;
 
+        // 連投防止(アカウント乗っ取り等への対策)。ユーザー単位で管理
+        // (チャンネル本体への投稿は毎回新規スレッドになるため、スレッド単位では検知できない)
+        private const int BurstWindowSeconds = 15;
+        private const int BurstThresholdCount = 3;
+        private const int DailyThresholdCount = 30;
+        private readonly ConcurrentDictionary<ulong, UserActivityState> _userActivity = new();
+
+        private class UserActivityState
+        {
+            public List<DateTime> RecentMessageTimestamps { get; } = new();
+            public int DailyMessageCount { get; set; }
+            public DateTime DailyCountResetAtJst { get; set; }
+            public bool DailyThresholdAcknowledgedToday { get; set; }
+            public bool ConfirmationPending { get; set; }
+        }
+
         static async Task Main(string[] args) => await new Program().MainAsync();
 
         public async Task MainAsync()
@@ -274,6 +290,69 @@ namespace DiscordAIBot
             }
         }
 
+        // 連投検知。トリップした場合はConfirmationPendingを立て、以降のメッセージを
+        // ユーザーがボタンで解除するまで保留する(解除方法はResetUserActivity参照)
+        private (bool needsConfirmation, string? reason) RecordActivityAndCheck(ulong userId)
+        {
+            var state = _userActivity.GetOrAdd(userId, _ => new UserActivityState());
+
+            lock (state)
+            {
+                if (state.ConfirmationPending)
+                {
+                    return (true, "連続送信を検知したため一時停止中です");
+                }
+
+                DateTime now = DateTime.UtcNow;
+
+                // 日次カウントのリセット判定(JST暦日基準)
+                DateTime nowJst = now.AddHours(9);
+                DateTime todayStartJst = new DateTime(nowJst.Year, nowJst.Month, nowJst.Day, 0, 0, 0, DateTimeKind.Utc);
+                if (state.DailyCountResetAtJst != todayStartJst)
+                {
+                    state.DailyMessageCount = 0;
+                    state.DailyThresholdAcknowledgedToday = false;
+                    state.DailyCountResetAtJst = todayStartJst;
+                }
+
+                state.RecentMessageTimestamps.Add(now);
+                state.RecentMessageTimestamps.RemoveAll(t => (now - t).TotalSeconds > BurstWindowSeconds);
+                state.DailyMessageCount++;
+
+                if (state.RecentMessageTimestamps.Count > BurstThresholdCount)
+                {
+                    state.ConfirmationPending = true;
+                    return (true, $"{BurstWindowSeconds}秒以内に{BurstThresholdCount}通を超える送信を検知しました");
+                }
+
+                if (!state.DailyThresholdAcknowledgedToday && state.DailyMessageCount > DailyThresholdCount)
+                {
+                    state.ConfirmationPending = true;
+                    return (true, $"本日の送信数が{DailyThresholdCount}通を超えました");
+                }
+
+                return (false, null);
+            }
+        }
+
+        private void ResetUserActivity(ulong userId)
+        {
+            if (_userActivity.TryGetValue(userId, out var state))
+            {
+                lock (state)
+                {
+                    state.ConfirmationPending = false;
+                    state.RecentMessageTimestamps.Clear();
+                    // 日次上限は「実際に超過していた場合のみ」確認済み扱いにする。
+                    // バースト検知起因の解除で日次チェックまで無効化してしまわないようにする
+                    if (state.DailyMessageCount > DailyThresholdCount)
+                    {
+                        state.DailyThresholdAcknowledgedToday = true;
+                    }
+                }
+            }
+        }
+
         private async Task<bool> CheckLmStudioOnlineAsync()
         {
             try
@@ -293,6 +372,17 @@ namespace DiscordAIBot
             ulong logicalChannelId = (userMessage.Channel is SocketThreadChannel t) ? t.ParentChannel.Id : userMessage.Channel.Id;
 
             if (logicalChannelId != _chatAiChannelId) return;
+
+            var (needsConfirmation, warningReason) = RecordActivityAndCheck(userMessage.Author.Id);
+            if (needsConfirmation)
+            {
+                var confirmBuilder = new ComponentBuilder()
+                    .WithButton("✅ 続行する", $"spam_confirm_{userMessage.Author.Id}", ButtonStyle.Primary);
+                await userMessage.Channel.SendMessageAsync(
+                    $"⚠️ **[セキュリティ確認]** {warningReason}。\nアカウントの不正利用防止のため、一時的に送信を保留しています。続行するには下のボタンを押してください（このメッセージ自体は処理されません。押した後、あらためて送信してください）。",
+                    components: confirmBuilder.Build());
+                return;
+            }
 
             SocketThreadChannel targetThread;
             ulong contextId;
@@ -426,6 +516,24 @@ namespace DiscordAIBot
 
         private async Task ButtonExecutedAsync(SocketMessageComponent component)
         {
+            if (component.Data.CustomId.StartsWith("spam_confirm_"))
+            {
+                string idString = component.Data.CustomId.Replace("spam_confirm_", "");
+                if (ulong.TryParse(idString, out ulong userId))
+                {
+                    // 本人以外が解除できないようにする
+                    if (component.User.Id != userId)
+                    {
+                        await component.RespondAsync("これはあなた宛の確認ではありません。", ephemeral: true);
+                        return;
+                    }
+
+                    ResetUserActivity(userId);
+                    await component.RespondAsync("✅ 制限を解除しました。続けてメッセージを送信してください。", ephemeral: true);
+                }
+                return;
+            }
+
             if (component.Data.CustomId.StartsWith("stop_"))
             {
                 string idString = component.Data.CustomId.Replace("stop_", "");
