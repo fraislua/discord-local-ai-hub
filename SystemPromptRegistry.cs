@@ -18,6 +18,15 @@ namespace DiscordAIBot
         public static readonly Dictionary<string, SystemPromptMetadata> AvailablePrompts = new()
         {
             {
+                "none",
+                new SystemPromptMetadata
+                {
+                    DisplayName = "プロンプトなし",
+                    Description = "システムプロンプトを設定しません（モデル標準の応答）",
+                    Prompt = ""
+                }
+            },
+            {
                 "creative",
                 new SystemPromptMetadata
                 {
