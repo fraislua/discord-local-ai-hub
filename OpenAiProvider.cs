@@ -136,6 +136,13 @@ namespace DiscordAIBot
             {
                 throw;
             }
+            catch (OperationCanceledException)
+            {
+                // 呼び出し元のキャンセル(停止ボタン・MCPクライアントの中断)やタイムアウトは包まずに伝播させる。
+                // 推論中はレスポンスヘッダーが届く前にキャンセルされるため、ここで包むと上位層がキャンセルとして
+                // 扱えず、「通信エラー」扱いになって使用量の推定記録からも漏れていた(provisioning/060)
+                throw;
+            }
             catch (Exception ex)
             {
                 throw new Exception($"OpenAI API 通信エラー: {ex.Message}", ex);

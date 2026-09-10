@@ -79,14 +79,14 @@ namespace DiscordAIBot
     public class AskTool
     {
         private readonly Func<ApiProvider, IAiProvider> _providerFactory;
-        private readonly Func<string, Task<bool>> _hasOpenAiBudgetAsync;
+        private readonly Func<string, int, Task<bool>> _hasOpenAiBudgetAsync;
         private readonly AskSessionStore _sessionStore;
         private readonly ILogger<AskTool> _logger;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
         public AskTool(
             Func<ApiProvider, IAiProvider> providerFactory,
-            Func<string, Task<bool>> hasOpenAiBudgetAsync,
+            Func<string, int, Task<bool>> hasOpenAiBudgetAsync,
             AskSessionStore sessionStore,
             ILogger<AskTool> logger,
             IHttpContextAccessor httpContextAccessor)
@@ -125,13 +125,6 @@ namespace DiscordAIBot
                 throw new McpException($"未知のモデルIDです: '{modelId}'。有効な値: {validIds}");
             }
 
-            // OpenAIは日次無料枠の事前ブロックをDiscord経由と全く同じロジックで通す
-            // (二重管理を避け、MCP経由の消費もUsageRecordsで一元的に把握する)
-            if (modelMeta.Provider == ApiProvider.OpenAi && !await _hasOpenAiBudgetAsync(modelMeta.ModelId))
-            {
-                throw new McpException($"モデル '{modelId}' は本日の無料枠上限に達しているため、現在使用できません。");
-            }
-
             EffortLevel effortLevel = EffortLevel.Medium;
             if (!string.IsNullOrWhiteSpace(effort) && !Enum.TryParse(effort, ignoreCase: true, out effortLevel))
             {
@@ -162,6 +155,18 @@ namespace DiscordAIBot
                     "超えています。新しいsession_idで開始するか、プロンプトを短くしてください。");
             }
 
+            // OpenAIは日次無料枠の事前ブロックをDiscord経由と全く同じロジックで通す
+            // (二重管理を避け、MCP経由の消費もUsageRecordsで一元的に把握する)。
+            // 今回のプロンプト(+session_idの履歴)分を安全側に見積もって含める(provisioning/060)
+            int conservativePromptTokens = CostEstimator.EstimatePromptTokensConservatively(estimatedTokens);
+            if (modelMeta.Provider == ApiProvider.OpenAi && !await _hasOpenAiBudgetAsync(modelMeta.ModelId, conservativePromptTokens))
+            {
+                throw new McpException(
+                    $"モデル '{modelId}' は本日の無料枠の残りでは、今回のリクエスト(推定プロンプト{conservativePromptTokens}トークン" +
+                    $"+出力上限{modelMeta.MaxOutputTokens}トークン)を送れないため使用できません。" +
+                    "プロンプトやsession_idの履歴を短くするか、別のモデルを指定してください。");
+            }
+
             var request = new AiRequest(
                 SystemPrompt: "",
                 ModelId: modelMeta.ModelId,
@@ -181,7 +186,7 @@ namespace DiscordAIBot
 
             // ストリーム受信・終了理由の収集・コスト記録はcompareと共通(McpModelCall)。
             // 進捗はチャンクの到着とは無関係に約3秒ごとに通知される
-            var result = await McpModelCall.RunAsync(provider, request, modelMeta,
+            var result = await McpModelCall.RunAsync(provider, request, modelMeta, conservativePromptTokens,
                 (elapsed, receivedChars) => progress.Report(new ProgressNotificationValue
                 {
                     Progress = (float)elapsed.TotalSeconds,

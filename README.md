@@ -126,6 +126,10 @@ claude mcp add --transport http discord-ai-hub http://<TailscaleのIP>:5100/mcp
 
 MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合も、Discord経由と同じ`UsageRecords`
 テーブル・同じコスト計算式・同じOpenAI日次無料枠の事前ブロックロジックを共有します（実装の二重化なし）。
+事前ブロックは「当日の使用量＋今回のプロンプトの見積もり（`TokenManager`の推定値×1.5＋固定分、画像は1枚2,000）
+＋出力上限」で判定し、Discord側も履歴・添付を組み立てた後に同じ基準で再判定します。途中で中断された呼び出し
+（MCPクライアント側の中断・Discordの停止ボタン）は使用量が届かないため、出力上限まで使った前提の推定値を
+`Source`が`mcp-cancelled`/`discord-cancelled`のレコードとして記録します。
 
 モデルが正常に書き終えなかった場合（出力上限到達・フィルタ等）、`ask`は本文末尾に`[⚠ ...]`の注記
 （`finish_reason`・トークン内訳）を付け、`compare`は該当モデルの`warning`・`finishReason`フィールドで

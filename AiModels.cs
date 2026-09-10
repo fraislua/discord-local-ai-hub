@@ -58,11 +58,13 @@ namespace DiscordAIBot
     );
 
     // StreamResponseHandlerの結果。PromptTokens等はクラウドプロバイダーがusageを
-    // 返した場合のみ値が入る（ローカルモデルはnullのまま＝コスト計算対象外）
+    // 返した場合のみ値が入る（ローカルモデルはnullのまま＝コスト計算対象外）。
+    // WasCancelledは停止ボタン等でストリームが途中で打ち切られた場合にtrue（usageは届かない）
     public record StreamResult(
         string RawText,
         int? PromptTokens,
         int? CompletionTokens,
-        int? ReasoningTokens
+        int? ReasoningTokens,
+        bool WasCancelled
     );
 }

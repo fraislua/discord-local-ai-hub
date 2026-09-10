@@ -171,7 +171,7 @@ namespace DiscordAIBot
             var streamHandler = new StreamResponseHandler();
             var driveUploader = new GoogleDriveUploader(_httpClient, googleAdcTokenProvider, _vertexProjectId);
 
-            _orchestrator = new ChatOrchestrator(providerFactory, attachmentProcessor, streamHandler, driveUploader);
+            _orchestrator = new ChatOrchestrator(providerFactory, attachmentProcessor, streamHandler, driveUploader, HasOpenAiBudgetAsync);
 
             await _client.LoginAsync(TokenType.Bot, _discordToken);
             await _client.StartAsync();
@@ -186,7 +186,7 @@ namespace DiscordAIBot
             // Discord bot本体と同じproviderFactory・無料枠事前ブロックをMCPツールにも
             // 注入する(実装を二重化しない。トークン使用量・レート制限の状態も自然に共有される)
             webBuilder.Services.AddSingleton(providerFactory);
-            webBuilder.Services.AddSingleton<Func<string, Task<bool>>>(HasOpenAiBudgetAsync);
+            webBuilder.Services.AddSingleton<Func<string, int, Task<bool>>>(HasOpenAiBudgetAsync);
             webBuilder.Services.AddSingleton<AskSessionStore>();
             // 呼び出し元(Tailscale IP)をAskTool内でログ記録するために必要
             webBuilder.Services.AddHttpContextAccessor();
@@ -382,9 +382,12 @@ namespace DiscordAIBot
                 .SumAsync(u => u.PromptTokens + u.CompletionTokens);
         }
 
-        // 送信前の事前ブロック判定。「当日の該当プール累計 + このモデルの最大出力トークン数」が
-        // 日次無料枠上限を超える場合はfalse(実際に課金が発生するリクエストは絶対に送らない)
-        private async Task<bool> HasOpenAiBudgetAsync(string modelId)
+        // 送信前の事前ブロック判定。「当日の該当プール累計 + 今回のプロンプトの見積もり + このモデルの
+        // 最大出力トークン数」が日次無料枠上限を超える場合はfalse(実際に課金が発生するリクエストは絶対に送らない)。
+        // estimatedPromptTokensはCostEstimator.EstimatePromptTokensConservativelyで安全側に換算した値を渡す。
+        // 従来はプロンプト分を含めておらず、長いプロンプト・長いスレッド履歴では判定を通過したうえで
+        // 上限を超えうる穴があった(provisioning/057)
+        private async Task<bool> HasOpenAiBudgetAsync(string modelId, int estimatedPromptTokens)
         {
             var pool = OpenAiQuota.GetPool(modelId);
             if (pool == null) return true;
@@ -395,7 +398,7 @@ namespace DiscordAIBot
                 ? meta.MaxOutputTokens
                 : 8192;
 
-            return usedToday + reserve <= pool.Value.Cap;
+            return usedToday + estimatedPromptTokens + reserve <= pool.Value.Cap;
         }
 
         // /effortの選択メニュー用のラベル・説明文(ユーザー希望により英語表記。
@@ -678,7 +681,9 @@ namespace DiscordAIBot
             }
             else if (targetModel.Provider == ApiProvider.OpenAi)
             {
-                bool hasBudget = await HasOpenAiBudgetAsync(targetModel.ModelId);
+                // 履歴・添付を組み立てる前の早期判定(プロンプト分は0)。今回送るプロンプト分を含めた判定は
+                // ChatOrchestratorで組み立て後に改めて行う
+                bool hasBudget = await HasOpenAiBudgetAsync(targetModel.ModelId, 0);
                 if (!hasBudget)
                 {
                     await targetThread.SendMessageAsync($"❌ **[無料枠超過]** 本日の`{targetModel.DisplayName}`無料枠(データ共有プログラム)を使い切りました。課金を避けるため送信を中止しました。\n💡 `/model` コマンドでローカルモデル、または別のモデルに切り替えてください。");

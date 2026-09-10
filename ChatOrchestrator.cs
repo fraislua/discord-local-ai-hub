@@ -16,6 +16,7 @@ namespace DiscordAIBot
         private readonly AttachmentProcessor _attachmentProcessor;
         private readonly StreamResponseHandler _streamResponseHandler;
         private readonly GoogleDriveUploader _driveUploader;
+        private readonly Func<string, int, Task<bool>> _hasOpenAiBudgetAsync;
 
         // スレッド(セッション)ごとの会話記録を保存するGoogle Drive上のフォルダ名
         private const string DriveFolderName = "Discord-AIChatbot";
@@ -24,12 +25,14 @@ namespace DiscordAIBot
             Func<ApiProvider, IAiProvider> providerFactory,
             AttachmentProcessor attachmentProcessor,
             StreamResponseHandler streamResponseHandler,
-            GoogleDriveUploader driveUploader)
+            GoogleDriveUploader driveUploader,
+            Func<string, int, Task<bool>> hasOpenAiBudgetAsync)
         {
             _providerFactory = providerFactory ?? throw new ArgumentNullException(nameof(providerFactory));
             _attachmentProcessor = attachmentProcessor;
             _streamResponseHandler = streamResponseHandler;
             _driveUploader = driveUploader;
+            _hasOpenAiBudgetAsync = hasOpenAiBudgetAsync;
         }
 
         public async Task ProcessUserMessageAsync(
@@ -106,6 +109,22 @@ namespace DiscordAIBot
                 initialContextTokens += TokenManager.CountTokens(turn.Content);
             }
 
+            // 無料枠の事前ブロックはProgram.cs側でも行っているが、そちらは履歴・添付を組み立てる前のため
+            // 今回送るプロンプト分を含められない。長いスレッドでは毎回数十万トークンの履歴を送りうるため、
+            // 組み立て後に推定プロンプト分込みで再判定し、超える場合は送信しない(provisioning/060)
+            int conservativePromptTokens = CostEstimator.EstimatePromptTokensConservatively(initialContextTokens, base64Images.Count);
+            if (modelMeta.Provider == ApiProvider.OpenAi && !await _hasOpenAiBudgetAsync(modelMeta.ModelId, conservativePromptTokens))
+            {
+                // 応答しない発言を履歴に残さない(次の発言の履歴に未回答のまま混ざるのを防ぐ)
+                await DeleteMessageAsync(currentUserMessageId);
+                await statusMessage.ModifyAsync(m =>
+                {
+                    m.Content = $"❌ **[無料枠超過]** 本日の`{modelMeta.DisplayName}`無料枠(データ共有プログラム)の残りでは、今回のメッセージ(履歴・添付を含む推定{conservativePromptTokens}トークン+出力上限{modelMeta.MaxOutputTokens}トークン)を送れません。課金を避けるため送信を中止しました。\n💡 新しいスレッドで会話を始めて履歴を減らすか、`/model` コマンドでローカルモデル、または別のモデルに切り替えてください。";
+                    m.Components = null;
+                });
+                return;
+            }
+
             // 動的プロバイダーの解決
             var aiProvider = _providerFactory(modelMeta.Provider);
             var stream = aiProvider.StreamChatAsync(request, cancellationToken);
@@ -141,6 +160,20 @@ namespace DiscordAIBot
                         streamResult.CompletionTokens ?? 0,
                         streamResult.ReasoningTokens ?? 0,
                         estimatedCost.Value);
+                }
+            }
+            else if (streamResult.WasCancelled)
+            {
+                // 停止ボタン等で途中で打ち切るとusageが届かないが、上流では生成済み分が消費されうる。
+                // 無料枠の集計から漏らさないよう、出力上限まで使った前提の推定値で記録する(provisioning/060)
+                int estimatedCompletionTokens = modelMeta.MaxOutputTokens > 0 ? modelMeta.MaxOutputTokens : 8192;
+                double? estimatedCost = CostEstimator.EstimateCostUsd(
+                    modelMeta.Provider, modelMeta.ModelId, conservativePromptTokens, estimatedCompletionTokens, 0);
+
+                if (estimatedCost.HasValue)
+                {
+                    await SaveUsageRecordAsync(
+                        modelMeta.ModelId, conservativePromptTokens, estimatedCompletionTokens, 0, estimatedCost.Value, source: "discord-cancelled");
                 }
             }
 
@@ -309,7 +342,7 @@ namespace DiscordAIBot
             await db.SaveChangesAsync();
         }
 
-        private async Task SaveUsageRecordAsync(string modelId, int promptTokens, int completionTokens, int reasoningTokens, double estimatedCostUsd)
+        private async Task SaveUsageRecordAsync(string modelId, int promptTokens, int completionTokens, int reasoningTokens, double estimatedCostUsd, string source = "discord")
         {
             using var db = new ChatDbContext();
             db.UsageRecords.Add(new UsageRecord
@@ -319,8 +352,19 @@ namespace DiscordAIBot
                 PromptTokens = promptTokens,
                 CompletionTokens = completionTokens,
                 ReasoningTokens = reasoningTokens,
-                EstimatedCostUsd = estimatedCostUsd
+                EstimatedCostUsd = estimatedCostUsd,
+                Source = source
             });
+            await db.SaveChangesAsync();
+        }
+
+        private async Task DeleteMessageAsync(long messageId)
+        {
+            using var db = new ChatDbContext();
+            var message = await db.Messages.FindAsync(messageId);
+            if (message == null) return;
+
+            db.Messages.Remove(message);
             await db.SaveChangesAsync();
         }
     }

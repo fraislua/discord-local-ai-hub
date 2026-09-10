@@ -181,6 +181,11 @@ namespace DiscordAIBot
             {
                 throw;
             }
+            catch (OperationCanceledException)
+            {
+                // キャンセル・タイムアウトは包まずに伝播させる(理由はOpenAiProviderと同じ、provisioning/060)
+                throw;
+            }
             catch (Exception ex)
             {
                 throw new Exception($"Vertex Gemini API 通信エラー: {ex.Message}", ex);

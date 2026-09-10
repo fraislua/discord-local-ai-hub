@@ -33,6 +33,22 @@ namespace DiscordAIBot
         private const double OpenAiLunaInputPerMillionUsd = 1.00;
         private const double OpenAiLunaOutputPerMillionUsd = 6.00;
 
+        // TokenManager(ローカルのGemma用トークナイザー)の推定トークン数を、上流APIで実際に数えられる
+        // トークン数の安全側の見積もりに換算する係数。実測(provisioning/060)では、日本語プロンプトで
+        // OpenAIの実数(チャット形式の固定分約7トークンを除く)は推定値の0.9〜1.35倍だった。
+        // 無料枠の事前ブロック・中断時の推定記録は「実際より少なく見積もらない」ことを優先し、1.5倍+固定分とする
+        private const double PromptEstimateSafetyFactor = 1.5;
+        private const int PromptEstimateFixedOverheadTokens = 100;
+
+        // 添付画像1枚あたりの見積もり。AttachmentProcessorが長辺1024pxに縮小するため実際は数百トークン程度だが、
+        // モデルごとの画像トークン計算の違いを吸収するため多めに見積もる
+        private const int EstimatedTokensPerImage = 2000;
+
+        public static int EstimatePromptTokensConservatively(int localTokenEstimate, int imageCount = 0) =>
+            (int)Math.Ceiling(localTokenEstimate * PromptEstimateSafetyFactor)
+            + PromptEstimateFixedOverheadTokens
+            + imageCount * EstimatedTokensPerImage;
+
         // ローカルモデル等、コスト計算対象外のプロバイダーはnullを返す
         public static double? EstimateCostUsd(ApiProvider provider, string modelId, int promptTokens, int completionTokens, int reasoningTokens)
         {

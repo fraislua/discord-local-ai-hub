@@ -29,7 +29,7 @@ namespace DiscordAIBot
     public class CompareModelsTool
     {
         private readonly Func<ApiProvider, IAiProvider> _providerFactory;
-        private readonly Func<string, Task<bool>> _hasOpenAiBudgetAsync;
+        private readonly Func<string, int, Task<bool>> _hasOpenAiBudgetAsync;
         private readonly ILogger<CompareModelsTool> _logger;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
@@ -56,7 +56,7 @@ namespace DiscordAIBot
 
         public CompareModelsTool(
             Func<ApiProvider, IAiProvider> providerFactory,
-            Func<string, Task<bool>> hasOpenAiBudgetAsync,
+            Func<string, int, Task<bool>> hasOpenAiBudgetAsync,
             ILogger<CompareModelsTool> logger,
             IHttpContextAccessor httpContextAccessor)
         {
@@ -142,11 +142,6 @@ namespace DiscordAIBot
                 return new ModelComparisonResult { ModelId = modelId, Error = $"未知のモデルIDです。有効な値: {validIds}" };
             }
 
-            if (modelMeta.Provider == ApiProvider.OpenAi && !await _hasOpenAiBudgetAsync(modelMeta.ModelId))
-            {
-                return new ModelComparisonResult { ModelId = modelId, Error = "本日の無料枠上限に達しているため、現在使用できません。" };
-            }
-
             int estimatedTokens = TokenManager.CountTokens(prompt);
             int contextBudget = modelMeta.ContextWindow - 2000;
             if (contextBudget > 0 && estimatedTokens > contextBudget)
@@ -155,6 +150,17 @@ namespace DiscordAIBot
                 {
                     ModelId = modelId,
                     Error = $"プロンプトが推定{estimatedTokens}トークンで、コンテキスト上限(安全マージン込み実質{contextBudget}トークン)を超えています。"
+                };
+            }
+
+            // 無料枠の事前ブロックは、今回のプロンプト分を安全側に見積もって含める(askと同じ、provisioning/060)
+            int conservativePromptTokens = CostEstimator.EstimatePromptTokensConservatively(estimatedTokens);
+            if (modelMeta.Provider == ApiProvider.OpenAi && !await _hasOpenAiBudgetAsync(modelMeta.ModelId, conservativePromptTokens))
+            {
+                return new ModelComparisonResult
+                {
+                    ModelId = modelId,
+                    Error = $"本日の無料枠の残りでは、今回のリクエスト(推定プロンプト{conservativePromptTokens}トークン+出力上限{modelMeta.MaxOutputTokens}トークン)を送れないため使用できません。"
                 };
             }
 
@@ -173,7 +179,7 @@ namespace DiscordAIBot
 
                 // ストリーム受信・終了理由の収集・進捗通知・コスト記録はaskと共通(McpModelCall)
                 var result = await McpModelCall.RunAsync(
-                    _providerFactory(modelMeta.Provider), request, modelMeta, reportProgress, cancellationToken);
+                    _providerFactory(modelMeta.Provider), request, modelMeta, conservativePromptTokens, reportProgress, cancellationToken);
 
                 // モデル単位の所要時間・終了理由を残す(provisioning/057の調査時、compareの中断が
                 // どのモデルの処理中に起きたかをログから直接特定できなかったため)

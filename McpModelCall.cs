@@ -37,6 +37,8 @@ namespace DiscordAIBot
             public Completion Completion => Classify(FinishReason);
         }
 
+        // conservativePromptTokensは、途中で打ち切られてusageが届かなかった場合の推定記録に使う
+        // (CostEstimator.EstimatePromptTokensConservativelyで換算済みの値)。
         // reportProgressがnullでなければ、呼び出し中は約3秒ごとに(経過時間, 受信済み文字数)で呼び出す。
         // 通知はチャンクの到着とは無関係なタイマーで行う。以前はチャンク受信ループの中で通知していたため、
         // 最初のトークンが届くまでの待ち(ローカルモデルのロード等)や、本文チャンクを流さない推論フェーズ
@@ -46,6 +48,7 @@ namespace DiscordAIBot
             IAiProvider provider,
             AiRequest request,
             ModelMetadata modelMeta,
+            int conservativePromptTokens,
             Action<TimeSpan, int>? reportProgress,
             CancellationToken cancellationToken)
         {
@@ -82,6 +85,25 @@ namespace DiscordAIBot
                     if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
                 }
             }
+            catch (Exception ex) when (ex is OperationCanceledException || cancellationToken.IsCancellationRequested)
+            {
+                // 途中で打ち切られた(MCPクライアント側の中断等)場合も、上流では生成済み分が消費されうる。
+                // 無料枠の集計から漏らさないよう記録してから例外を伝播させる。usageが届いていなければ、
+                // 出力上限まで使った前提の推定値で記録する(provisioning/060)。記録自体が打ち切られないよう
+                // CancellationToken.Noneで書き込む。
+                // プロバイダーがキャンセルを別の例外に包んで投げた場合も記録から漏れないよう、例外の型だけで
+                // なく呼び出し元のキャンセル状態でも判定する(実機検証で、OpenAIの推論中のキャンセルが
+                // 「OpenAI API 通信エラー」に包まれて記録から漏れたため)
+                if (promptTokens.HasValue)
+                {
+                    await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, "mcp", CancellationToken.None);
+                }
+                else
+                {
+                    await RecordUsageAsync(modelMeta, conservativePromptTokens, Math.Max(modelMeta.MaxOutputTokens, 0), 0, "mcp-cancelled", CancellationToken.None);
+                }
+                throw;
+            }
             finally
             {
                 // 正常終了・例外・キャンセルのいずれでも通知を止め、停止を待ってから抜ける
@@ -90,30 +112,34 @@ namespace DiscordAIBot
                 await progressLoop;
             }
 
-            double? estimatedCost = null;
-            if (promptTokens.HasValue)
-            {
-                estimatedCost = CostEstimator.EstimateCostUsd(
-                    modelMeta.Provider, modelMeta.ModelId, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0);
-
-                if (estimatedCost.HasValue)
-                {
-                    using var db = new ChatDbContext();
-                    db.UsageRecords.Add(new UsageRecord
-                    {
-                        CreatedAt = DateTime.UtcNow,
-                        ModelId = modelMeta.ModelId,
-                        PromptTokens = promptTokens.Value,
-                        CompletionTokens = completionTokens ?? 0,
-                        ReasoningTokens = reasoningTokens ?? 0,
-                        EstimatedCostUsd = estimatedCost.Value,
-                        Source = "mcp"
-                    });
-                    await db.SaveChangesAsync(cancellationToken);
-                }
-            }
+            double? estimatedCost = promptTokens.HasValue
+                ? await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, "mcp", cancellationToken)
+                : null;
 
             return new Result(responseText.ToString(), finishReason, promptTokens, completionTokens, reasoningTokens, estimatedCost);
+        }
+
+        // コスト計算対象のプロバイダー(ローカルモデル以外)ならUsageRecordsに記録し、推定コストを返す
+        private static async Task<double?> RecordUsageAsync(
+            ModelMetadata modelMeta, int promptTokens, int completionTokens, int reasoningTokens, string source, CancellationToken cancellationToken)
+        {
+            double? estimatedCost = CostEstimator.EstimateCostUsd(
+                modelMeta.Provider, modelMeta.ModelId, promptTokens, completionTokens, reasoningTokens);
+            if (!estimatedCost.HasValue) return null;
+
+            using var db = new ChatDbContext();
+            db.UsageRecords.Add(new UsageRecord
+            {
+                CreatedAt = DateTime.UtcNow,
+                ModelId = modelMeta.ModelId,
+                PromptTokens = promptTokens,
+                CompletionTokens = completionTokens,
+                ReasoningTokens = reasoningTokens,
+                EstimatedCostUsd = estimatedCost.Value,
+                Source = source
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            return estimatedCost;
         }
 
         private static async Task ReportPeriodicallyAsync(Action report, CancellationToken cancellationToken)

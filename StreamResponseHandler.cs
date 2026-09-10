@@ -176,7 +176,7 @@ namespace DiscordAIBot
             currentDiscordMsg = finalResult.Message;
             currentStartIndex = finalResult.NextIndex;
 
-            return new StreamResult(rawTextBuffer.ToString(), usagePromptTokens, usageCompletionTokens, usageReasoningTokens);
+            return new StreamResult(rawTextBuffer.ToString(), usagePromptTokens, usageCompletionTokens, usageReasoningTokens, lastFinishReason == "cancelled");
         }
 
         private async Task<(IUserMessage Message, int NextIndex)> UpdateDiscordMessageAsync(
