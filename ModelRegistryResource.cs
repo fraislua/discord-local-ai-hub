@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
@@ -68,7 +69,12 @@ namespace DiscordAIBot
                 Models = models
             };
 
-            return JsonSerializer.Serialize(registry, new JsonSerializerOptions { WriteIndented = true });
+            // 日本語(usageNote等)を\uXXXXにエスケープしない(CompareModelsToolと同じ理由)
+            return JsonSerializer.Serialize(registry, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
         }
 
         private static (string CostTier, bool DataSharing, string Note) DescribeCost(ApiProvider provider) => provider switch

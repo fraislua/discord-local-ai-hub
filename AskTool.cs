@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -99,7 +98,7 @@ namespace DiscordAIBot
             _httpContextAccessor = httpContextAccessor;
         }
 
-        [McpServerTool, Description("質問・軽いコード生成をAIモデルに投げ、応答テキストを返します。session_id省略時は毎回独立したリクエスト(履歴なし)。session_idを指定すると、同じIDでの呼び出し間で直前までの会話を踏まえて応答します(有効期限20分、サーバー再起動でも消える使い捨ての短期履歴)。")]
+        [McpServerTool, Description("質問・軽いコード生成をAIモデルに投げ、応答テキストを返します。session_id省略時は毎回独立したリクエスト(履歴なし)。session_idを指定すると、同じIDでの呼び出し間で直前までの会話を踏まえて応答します(有効期限20分、サーバー再起動でも消える使い捨ての短期履歴)。応答が出力上限などで途中で終わった場合は本文の末尾に「[⚠ ...]」の注記(finish_reason・トークン内訳)が付き、本文が空の場合はエラーになります。出力上限はmodels://registryのmaxOutputTokensで確認でき、OpenAIモデル(gpt-5.6-*)では推論トークンもこの上限に含まれます。")]
         public async Task<string> Ask(
             [Description("モデルへの質問・依頼内容")] string prompt,
             [Description("使用するモデルID(省略時はローカルの既定モデル)。/modelで選択可能なIDと同じ値(例: gemini-3.8-flash, xai/grok-4.6, gpt-5.6-sol)")] string? model,
@@ -176,77 +175,43 @@ namespace DiscordAIBot
 
             var provider = _providerFactory(modelMeta.Provider);
 
-            var responseText = new StringBuilder();
-            int? promptTokens = null;
-            int? completionTokens = null;
-            int? reasoningTokens = null;
-
-            // クライアントがprogressTokenを送っていない場合、MCP SDKはNullProgressを注入する
-            // ため、常時Report()を呼んでも安全(その場合は単に無視される)。長時間かかる
-            // クラウド呼び出し(High/XHigh effort等)でMCPクライアント側のタイムアウトを
-            // 回避する狙いで、経過時間ベースで一定間隔ごとに進捗を通知する
-            const int ProgressIntervalMs = 3000;
-            var overallStopwatch = Stopwatch.StartNew();
-            long lastProgressReportMs = 0;
-            progress.Report(new ProgressNotificationValue { Progress = 0, Message = "モデル呼び出しを開始しました" });
-
-            await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
-            {
-                if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
-                {
-                    responseText.Append(chunk.TextDelta);
-                }
-
-                if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens;
-                if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens;
-                if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
-
-                if (overallStopwatch.ElapsedMilliseconds - lastProgressReportMs >= ProgressIntervalMs)
-                {
-                    lastProgressReportMs = overallStopwatch.ElapsedMilliseconds;
-                    int elapsedSeconds = (int)overallStopwatch.Elapsed.TotalSeconds;
-                    progress.Report(new ProgressNotificationValue
-                    {
-                        Progress = elapsedSeconds,
-                        Message = $"応答生成中...(経過{elapsedSeconds}秒、{responseText.Length}文字受信済み)"
-                    });
-                }
-            }
-
-            string answer = responseText.ToString();
-
-            if (!string.IsNullOrWhiteSpace(session_id))
-            {
-                _sessionStore.AppendTurn(session_id, prompt, answer);
-            }
-
-            if (promptTokens.HasValue)
-            {
-                double? estimatedCost = CostEstimator.EstimateCostUsd(
-                    modelMeta.Provider, modelMeta.ModelId, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0);
-
-                if (estimatedCost.HasValue)
-                {
-                    using var db = new ChatDbContext();
-                    db.UsageRecords.Add(new UsageRecord
-                    {
-                        CreatedAt = DateTime.UtcNow,
-                        ModelId = modelMeta.ModelId,
-                        PromptTokens = promptTokens.Value,
-                        CompletionTokens = completionTokens ?? 0,
-                        ReasoningTokens = reasoningTokens ?? 0,
-                        EstimatedCostUsd = estimatedCost.Value,
-                        Source = "mcp"
-                    });
-                    await db.SaveChangesAsync(cancellationToken);
-                }
-            }
+            // ストリーム受信・終了理由の収集・進捗通知・コスト記録はcompareと共通(McpModelCall)
+            var result = await McpModelCall.RunAsync(provider, request, modelMeta, progress, cancellationToken);
 
             _logger.LogInformation(
-                "MCP ask 完了: caller={CallerIp} session={SessionId} model={ModelId} durationMs={DurationMs} promptTokens={PromptTokens} completionTokens={CompletionTokens}",
-                callerIp, session_id ?? "(none)", modelMeta.ModelId, callStopwatch.ElapsedMilliseconds, promptTokens, completionTokens);
+                "MCP ask 完了: caller={CallerIp} session={SessionId} model={ModelId} durationMs={DurationMs} finishReason={FinishReason} answerChars={AnswerChars} promptTokens={PromptTokens} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens}",
+                callerIp, session_id ?? "(none)", modelMeta.ModelId, callStopwatch.ElapsedMilliseconds, result.FinishReason ?? "(none)", result.Answer.Length, result.PromptTokens, result.CompletionTokens, result.ReasoningTokens);
 
-            return answer;
+            // 本文が空の応答を成功として返すと、呼び出し元は「成功したが中身が無い」を失敗と区別
+            // できない(provisioning/057: 推論トークンが出力上限を使い切り、本文0トークンのまま
+            // IsError=Falseで返っていた)。使用量はRunAsync内で記録済みのため、ここでエラーにして
+            // session_idの履歴にも残さない
+            if (string.IsNullOrWhiteSpace(result.Answer))
+            {
+                throw new McpException(McpModelCall.BuildEmptyAnswerMessage(result, modelMeta));
+            }
+
+            // 途中で切れた応答も、同じsession_idで「続きを」と依頼できるよう本文はそのまま履歴に残す
+            // (注記は呼び出し元へのメタ情報のため履歴には含めない)
+            if (!string.IsNullOrWhiteSpace(session_id))
+            {
+                _sessionStore.AppendTurn(session_id, prompt, result.Answer);
+            }
+
+            string? notice = McpModelCall.BuildIncompleteNotice(result, modelMeta);
+            if (notice is null)
+            {
+                return result.Answer;
+            }
+
+            if (result.Completion == McpModelCall.Completion.Truncated)
+            {
+                notice += string.IsNullOrWhiteSpace(session_id)
+                    ? "続きが必要な場合は、質問を分割して呼び出し直してください。"
+                    : "続きが必要な場合は、同じsession_idで続きを依頼するか、質問を分割してください。";
+            }
+
+            return $"{result.Answer}\n\n[⚠ {notice}]";
         }
     }
 }

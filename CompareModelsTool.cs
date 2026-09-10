@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -33,11 +33,23 @@ namespace DiscordAIBot
         private readonly ILogger<CompareModelsTool> _logger;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
+        // 日本語等の非ASCII文字を\uXXXXにエスケープしない。既定のエンコーダーはエスケープするため、
+        // 呼び出し元エージェントが読むテキストが読みにくく、トークン数も数倍に膨らんでいた。
+        // 結果はHTMLに埋め込まずMCPのテキストとして返すだけなので、緩いエスケープで問題ない
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
         private class ModelComparisonResult
         {
             [JsonPropertyName("modelId")] public string ModelId { get; init; } = "";
             [JsonPropertyName("answer")] public string? Answer { get; init; }
             [JsonPropertyName("error")] public string? Error { get; init; }
+            // 本文はあるが出力上限等で正常終了しなかった場合の注記(正常終了時はnull)
+            [JsonPropertyName("warning")] public string? Warning { get; init; }
+            [JsonPropertyName("finishReason")] public string? FinishReason { get; init; }
             [JsonPropertyName("durationMs")] public long DurationMs { get; init; }
             [JsonPropertyName("estimatedCostUsd")] public double? EstimatedCostUsd { get; init; }
         }
@@ -54,7 +66,7 @@ namespace DiscordAIBot
             _httpContextAccessor = httpContextAccessor;
         }
 
-        [McpServerTool, Description("同じプロンプトを複数のモデルに順番に投げ、それぞれの応答をJSON配列で返して比較する。1モデルの失敗(無効なID・無料枠切れ・コンテキスト超過・呼び出しエラー)は他モデルの結果に影響しない(そのモデルのerrorフィールドに理由が入るのみ)。data sharing前提のOpenAIモデル(gpt-5.6-*)を含めるかどうかはaskツールのmodel引数と同様に呼び出し側の判断に委ねる(ツール側では除外しない)。session_idによる短期履歴には非対応(毎回独立したリクエスト)。モデル数が多い・effortが高いと時間がかかるため、呼び出し中はProgress notificationsで進捗を通知する。")]
+        [McpServerTool, Description("同じプロンプトを複数のモデルに順番に投げ、それぞれの応答をJSON配列で返して比較する。1モデルの失敗(無効なID・無料枠切れ・コンテキスト超過・呼び出しエラー)は他モデルの結果に影響しない(そのモデルのerrorフィールドに理由が入るのみ)。各モデルの結果にはfinishReasonが含まれ、出力上限などで途中で終わった場合はwarningに注記が入り、本文が空の場合はerrorになる。data sharing前提のOpenAIモデル(gpt-5.6-*)を含めるかどうかはaskツールのmodel引数と同様に呼び出し側の判断に委ねる(ツール側では除外しない)。session_idによる短期履歴には非対応(毎回独立したリクエスト)。モデル数が多い・effortが高いと時間がかかるため、呼び出し中はProgress notificationsで進捗を通知する。")]
         public async Task<string> Compare(
             [Description("全モデル共通の質問・依頼内容")] string prompt,
             [Description("比較したいモデルIDの配列(1個以上)。/modelで選択可能なIDと同じ値")] string[] models,
@@ -103,7 +115,7 @@ namespace DiscordAIBot
                 "MCP compare 完了: caller={CallerIp} models={Models} errorCount={ErrorCount}",
                 callerIp, string.Join(",", models), results.FindAll(r => r.Error is not null).Count);
 
-            return JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(results, _jsonOptions);
         }
 
         private async Task<ModelComparisonResult> CallSingleModelAsync(
@@ -146,53 +158,38 @@ namespace DiscordAIBot
                     Effort: effortLevel
                 );
 
-                var provider = _providerFactory(modelMeta.Provider);
-                var responseText = new StringBuilder();
-                int? promptTokens = null;
-                int? completionTokens = null;
-                int? reasoningTokens = null;
+                // ストリーム受信・終了理由の収集・コスト記録はaskと共通(McpModelCall)。
+                // 進捗はCompare側でモデル切り替え時に通知しているためprogressは渡さない
+                var result = await McpModelCall.RunAsync(
+                    _providerFactory(modelMeta.Provider), request, modelMeta, progress: null, cancellationToken);
 
-                await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
+                // モデル単位の所要時間・終了理由を残す(provisioning/057の調査時、compareの中断が
+                // どのモデルの処理中に起きたかをログから直接特定できなかったため)
+                _logger.LogInformation(
+                    "MCP compare モデル完了: model={ModelId} durationMs={DurationMs} finishReason={FinishReason} answerChars={AnswerChars} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens}",
+                    modelId, stopwatch.ElapsedMilliseconds, result.FinishReason ?? "(none)", result.Answer.Length, result.CompletionTokens, result.ReasoningTokens);
+
+                // 空応答はaskと同じくエラー扱い(使用量はRunAsync内で記録済み)
+                if (string.IsNullOrWhiteSpace(result.Answer))
                 {
-                    if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
+                    return new ModelComparisonResult
                     {
-                        responseText.Append(chunk.TextDelta);
-                    }
-
-                    if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens;
-                    if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens;
-                    if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
-                }
-
-                double? estimatedCost = null;
-                if (promptTokens.HasValue)
-                {
-                    estimatedCost = CostEstimator.EstimateCostUsd(
-                        modelMeta.Provider, modelMeta.ModelId, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0);
-
-                    if (estimatedCost.HasValue)
-                    {
-                        using var db = new ChatDbContext();
-                        db.UsageRecords.Add(new UsageRecord
-                        {
-                            CreatedAt = DateTime.UtcNow,
-                            ModelId = modelMeta.ModelId,
-                            PromptTokens = promptTokens.Value,
-                            CompletionTokens = completionTokens ?? 0,
-                            ReasoningTokens = reasoningTokens ?? 0,
-                            EstimatedCostUsd = estimatedCost.Value,
-                            Source = "mcp"
-                        });
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
+                        ModelId = modelId,
+                        Error = McpModelCall.BuildEmptyAnswerMessage(result, modelMeta),
+                        FinishReason = result.FinishReason,
+                        DurationMs = stopwatch.ElapsedMilliseconds,
+                        EstimatedCostUsd = result.EstimatedCostUsd
+                    };
                 }
 
                 return new ModelComparisonResult
                 {
                     ModelId = modelId,
-                    Answer = responseText.ToString(),
+                    Answer = result.Answer,
+                    Warning = McpModelCall.BuildIncompleteNotice(result, modelMeta),
+                    FinishReason = result.FinishReason,
                     DurationMs = stopwatch.ElapsedMilliseconds,
-                    EstimatedCostUsd = estimatedCost
+                    EstimatedCostUsd = result.EstimatedCostUsd
                 };
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

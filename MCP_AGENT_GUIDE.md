@@ -49,6 +49,28 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 ます**。エラーメッセージに推定トークン数と上限が含まれるので、新しい`session_id`で
 仕切り直すか、プロンプトを短くして再試行してください。
 
+### 応答が不完全な場合の挙動(出力上限・空応答)
+
+モデルが正常に書き終えなかった場合、**途中までの本文を黙って返すことはしません**。
+
+- **途中で終わった場合**: 本文の末尾に次のような注記が付きます。`finish_reason`
+  (`length`/`MAX_TOKENS`は出力上限に到達、`content_filter`/`SAFETY`等はそれ以外の理由)と
+  トークン内訳が含まれます
+
+  ```
+  [⚠ 応答は出力上限に達して途中で切れています(finish_reason=length、出力トークン=32000、推論トークン=12000、出力上限=32000)。続きが必要な場合は、同じsession_idで続きを依頼するか、質問を分割してください。]
+  ```
+
+- **本文が空の場合**: エラー(`isError: true`)になり、理由(`finish_reason`・トークン内訳)が
+  メッセージに含まれます。空の応答は`session_id`の履歴にも残りません
+- 途中で終わった応答は、同じ`session_id`で「続きを」と依頼できるよう本文だけを履歴に残します
+  (注記は残しません)。ただし推論モデルは続きの生成でも改めて推論にトークンを使うため、
+  確実に続きが得られるとは限りません。**長い回答が必要な質問は、最初から分割して投げる方が
+  確実です**
+
+出力上限は`models://registry`の`maxOutputTokens`で確認できます。**OpenAIモデル(`gpt-5.6-*`)
+では推論(思考)トークンもこの上限に含まれる**ため、`effort`が高いほど本文に使える量が減ります。
+
 ### 選べるモデルID(`model`引数)
 
 **このMCPサーバーはリソース`models://registry`を提供しています。**`resources/read`で
@@ -125,15 +147,19 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 
 ```json
 [
-  { "modelId": "google/gemma-4-12b-qat", "answer": "...", "error": null, "durationMs": 2063, "estimatedCostUsd": null },
-  { "modelId": "gpt-5.6-luna", "answer": "...", "error": null, "durationMs": 2068, "estimatedCostUsd": 0.000059 },
-  { "modelId": "not-a-real-model", "answer": null, "error": "未知のモデルIDです。...", "durationMs": 0, "estimatedCostUsd": null }
+  { "modelId": "google/gemma-4-12b-qat", "answer": "...", "error": null, "warning": null, "finishReason": "stop", "durationMs": 2063, "estimatedCostUsd": null },
+  { "modelId": "gpt-5.6-luna", "answer": "...", "error": null, "warning": "応答は出力上限に達して途中で切れています(...)。", "finishReason": "length", "durationMs": 95310, "estimatedCostUsd": 0.19 },
+  { "modelId": "not-a-real-model", "answer": null, "error": "未知のモデルIDです。...", "warning": null, "finishReason": null, "durationMs": 0, "estimatedCostUsd": null }
 ]
 ```
 
 **1モデルの失敗は他モデルの結果に影響しません。** 無効なモデルID・無料枠切れ・
-コンテキスト超過・プロバイダー側のエラーは、そのモデルの`error`フィールドに理由が
-入るだけで、ツール呼び出し自体は`isError`にならず、他モデルの結果は正常に返ります。
+コンテキスト超過・プロバイダー側のエラー・**本文が空の応答**は、そのモデルの`error`フィールドに
+理由が入るだけで、ツール呼び出し自体は`isError`にならず、他モデルの結果は正常に返ります。
+
+`finishReason`は各モデルの終了理由(`stop`/`STOP`が正常終了)です。本文はあるが出力上限等で
+正常に書き終えなかった場合は`warning`に注記が入ります(`ask`の末尾注記と同じ内容)。
+**`warning`が`null`でない回答は不完全な可能性がある**ものとして扱ってください。
 
 ### OpenAI(データ共有)モデルの扱い
 

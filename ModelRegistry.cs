@@ -109,7 +109,11 @@ namespace DiscordAIBot
                     DisplayName = "GPT-5.6 Sol",
                     ModelId = "gpt-5.6-sol",
                     ContextWindow = 1050000,
-                    MaxOutputTokens = 8192,
+                    // max_completion_tokensとして送る値。OpenAIでは推論トークンもこの上限に含まれ、
+                    // 8192ではeffort=High等で本文が空・途中切れになる実害があった(provisioning/057)。
+                    // 公式上限は128,000だが、Program.csの無料枠事前ブロックがこの値を1回分の予約量として
+                    // 使うため、枠の小さいSol(25万/日)で実際に使える量との兼ね合いで32,000とした
+                    MaxOutputTokens = 32000,
                     Description = "OpenAI最上位モデル (無料枠 25万トークン/日)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
@@ -124,7 +128,8 @@ namespace DiscordAIBot
                     DisplayName = "GPT-5.6 Terra",
                     ModelId = "gpt-5.6-terra",
                     ContextWindow = 1050000,
-                    MaxOutputTokens = 8192,
+                    // 推論トークン込みの上限。Solと揃えて32,000(理由はSolのコメント参照)
+                    MaxOutputTokens = 32000,
                     Description = "OpenAIバランス型モデル (無料枠 250万トークン/日、Lunaと共有)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
@@ -139,7 +144,8 @@ namespace DiscordAIBot
                     DisplayName = "GPT-5.6 Luna",
                     ModelId = "gpt-5.6-luna",
                     ContextWindow = 1050000,
-                    MaxOutputTokens = 8192,
+                    // 推論トークン込みの上限。Solと揃えて32,000(理由はSolのコメント参照)
+                    MaxOutputTokens = 32000,
                     Description = "OpenAI高速・低コストモデル (無料枠 250万トークン/日、Terraと共有)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
