@@ -4,17 +4,20 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using ModelContextProtocol;
 
 namespace DiscordAIBot
 {
     // MCPツール(ask/compare)共通の「1モデル呼び出し」処理。ストリーム受信・終了理由の収集・
-    // コスト記録を1か所にまとめ、両ツールで同じ受信ループを二重に持たないようにする。
+    // 進捗通知・コスト記録を1か所にまとめ、両ツールで同じ受信ループを二重に持たないようにする。
     // Discord側(StreamResponseHandler)はフッターの`Reason: length`等で人間に切り捨てを知らせるが、
     // MCP経由では終了理由を捨てていたため、呼び出し元のAIエージェントが「書き終えた」のか
     // 「上限で切られた」のかを区別できなかった(provisioning/057)
     public static class McpModelCall
     {
+        // MCPクライアント(Claude Code等)は無応答・無進捗が続くとツール呼び出しを中断するため、
+        // この間隔で進捗を通知する
+        private static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(3);
+
         public enum Completion
         {
             Complete,  // 正常終了(stop / STOP)
@@ -34,52 +37,57 @@ namespace DiscordAIBot
             public Completion Completion => Classify(FinishReason);
         }
 
-        // progressがnullでなければ、受信中に約3秒間隔で進捗を通知する
+        // reportProgressがnullでなければ、呼び出し中は約3秒ごとに(経過時間, 受信済み文字数)で呼び出す。
+        // 通知はチャンクの到着とは無関係なタイマーで行う。以前はチャンク受信ループの中で通知していたため、
+        // 最初のトークンが届くまでの待ち(ローカルモデルのロード等)や、本文チャンクを流さない推論フェーズ
+        // (OpenAI/Grok)の間は無通知になり、compareでは1モデルの生成中ずっと無通知だった
+        // (provisioning/057: 326秒無通知でクライアントに中断された)
         public static async Task<Result> RunAsync(
             IAiProvider provider,
             AiRequest request,
             ModelMetadata modelMeta,
-            IProgress<ProgressNotificationValue>? progress,
+            Action<TimeSpan, int>? reportProgress,
             CancellationToken cancellationToken)
         {
             var responseText = new StringBuilder();
+            int receivedChars = 0; // タイマー側から読むため、StringBuilderとは別にInterlockedで更新する
             string? finishReason = null;
             int? promptTokens = null;
             int? completionTokens = null;
             int? reasoningTokens = null;
 
-            // クライアントがprogressTokenを送っていない場合、MCP SDKはNullProgressを注入する
-            // ため、常時Report()を呼んでも安全(その場合は単に無視される)。長時間かかる
-            // クラウド呼び出し(High/XHigh effort等)でMCPクライアント側のタイムアウトを
-            // 回避する狙いで、経過時間ベースで一定間隔ごとに進捗を通知する
-            const int ProgressIntervalMs = 3000;
             var stopwatch = Stopwatch.StartNew();
-            long lastProgressReportMs = 0;
-            progress?.Report(new ProgressNotificationValue { Progress = 0, Message = "モデル呼び出しを開始しました" });
-
-            await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
+            using var progressCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            Task progressLoop = Task.CompletedTask;
+            if (reportProgress is { } report)
             {
-                if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
-                {
-                    responseText.Append(chunk.TextDelta);
-                }
+                progressLoop = ReportPeriodicallyAsync(
+                    () => report(stopwatch.Elapsed, Volatile.Read(ref receivedChars)), progressCts.Token);
+            }
 
-                // 終了理由は最後に届いた非空の値を採用する
-                if (!string.IsNullOrEmpty(chunk.FinishReason)) finishReason = chunk.FinishReason;
-                if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens;
-                if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens;
-                if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
-
-                if (progress != null && stopwatch.ElapsedMilliseconds - lastProgressReportMs >= ProgressIntervalMs)
+            try
+            {
+                await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
                 {
-                    lastProgressReportMs = stopwatch.ElapsedMilliseconds;
-                    int elapsedSeconds = (int)stopwatch.Elapsed.TotalSeconds;
-                    progress.Report(new ProgressNotificationValue
+                    if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
                     {
-                        Progress = elapsedSeconds,
-                        Message = $"応答生成中...(経過{elapsedSeconds}秒、{responseText.Length}文字受信済み)"
-                    });
+                        responseText.Append(chunk.TextDelta);
+                        Interlocked.Add(ref receivedChars, chunk.TextDelta.Length);
+                    }
+
+                    // 終了理由は最後に届いた非空の値を採用する
+                    if (!string.IsNullOrEmpty(chunk.FinishReason)) finishReason = chunk.FinishReason;
+                    if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens;
+                    if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens;
+                    if (chunk.ReasoningTokens.HasValue) reasoningTokens = chunk.ReasoningTokens;
                 }
+            }
+            finally
+            {
+                // 正常終了・例外・キャンセルのいずれでも通知を止め、停止を待ってから抜ける
+                // (ツール呼び出しの完了後に進捗通知が送られないようにする)
+                progressCts.Cancel();
+                await progressLoop;
             }
 
             double? estimatedCost = null;
@@ -106,6 +114,22 @@ namespace DiscordAIBot
             }
 
             return new Result(responseText.ToString(), finishReason, promptTokens, completionTokens, reasoningTokens, estimatedCost);
+        }
+
+        private static async Task ReportPeriodicallyAsync(Action report, CancellationToken cancellationToken)
+        {
+            using var timer = new PeriodicTimer(ProgressInterval);
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cancellationToken))
+                {
+                    report();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // ストリームの終了、または呼び出し元のキャンセルで停止する
+            }
         }
 
         // プロバイダーごとに終了理由の表記が異なる(OpenAI互換API: stop/length、Gemini: STOP/MAX_TOKENS)

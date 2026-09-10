@@ -181,11 +181,12 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 - `session_id`の履歴はプロセスメモリ上のみ(有効期限20分・最大20往復)。長期記憶や
   厳密な永続性が必要な情報はエージェント側で管理すること
 - 応答は同期的に返る(ジョブ投げ→ポーリングのような非同期処理には未対応)。ただし呼び出し中は
-  MCPプロトコルのProgress notifications(`notifications/progress`)を約3秒間隔で送信する
-  ため、`tools/call`のリクエストに`progressToken`を含めて呼び出すMCPクライアントであれば、
-  極端に長い応答生成でもタイムアウトが延長される可能性が高い(Claude Code等、対応クライアント
-  側の挙動に依存)。実機検証では、ローカルモデル・`effort: High`で166秒かかった呼び出しも
-  途中の進捗通知を挟みつつ正常完了することを確認済み
+  MCPプロトコルのProgress notifications(`notifications/progress`)を約3秒間隔で送信する。
+  送信はモデルからのデータ到着とは無関係に行うため、最初のトークンを待つ間(ローカルモデルの
+  ロード等)・推論(思考)中・`compare`の各モデルの生成中も途切れない。`tools/call`のリクエストに
+  `progressToken`を含めるMCPクライアント(Claude Code等)であれば、長い応答生成でもクライアント側の
+  無応答タイムアウトで中断されにくい。`compare`の進捗値はcompare全体の経過秒数で、何モデル目を
+  処理中かはメッセージに含まれる
 
 ## 既知の注意点
 

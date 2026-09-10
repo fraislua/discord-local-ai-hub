@@ -175,8 +175,19 @@ namespace DiscordAIBot
 
             var provider = _providerFactory(modelMeta.Provider);
 
-            // ストリーム受信・終了理由の収集・進捗通知・コスト記録はcompareと共通(McpModelCall)
-            var result = await McpModelCall.RunAsync(provider, request, modelMeta, progress, cancellationToken);
+            // クライアントがprogressTokenを送っていない場合、MCP SDKはNullProgressを注入する
+            // ため、常時Report()を呼んでも安全(その場合は単に無視される)
+            progress.Report(new ProgressNotificationValue { Progress = 0, Message = "モデル呼び出しを開始しました" });
+
+            // ストリーム受信・終了理由の収集・コスト記録はcompareと共通(McpModelCall)。
+            // 進捗はチャンクの到着とは無関係に約3秒ごとに通知される
+            var result = await McpModelCall.RunAsync(provider, request, modelMeta,
+                (elapsed, receivedChars) => progress.Report(new ProgressNotificationValue
+                {
+                    Progress = (float)elapsed.TotalSeconds,
+                    Message = $"応答生成中...(経過{elapsed.TotalSeconds:F0}秒、{receivedChars}文字受信済み)"
+                }),
+                cancellationToken);
 
             _logger.LogInformation(
                 "MCP ask 完了: caller={CallerIp} session={SessionId} model={ModelId} durationMs={DurationMs} finishReason={FinishReason} answerChars={AnswerChars} promptTokens={PromptTokens} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens}",

@@ -96,20 +96,32 @@ namespace DiscordAIBot
 
             var results = new List<ModelComparisonResult>();
 
+            // progressの値はcompare全体の経過秒数とする。MCP仕様上progressは通知ごとに増加する必要があり、
+            // モデルをまたいでも単調増加させるため。何モデル目を処理中かはMessageに含める
+            var compareStopwatch = Stopwatch.StartNew();
+
             for (int i = 0; i < models.Length; i++)
             {
                 string modelId = models[i];
+                string position = $"{i + 1}/{models.Length}";
                 progress.Report(new ProgressNotificationValue
                 {
-                    Progress = i,
-                    Total = models.Length,
-                    Message = $"{modelId} を呼び出し中...({i + 1}/{models.Length})"
+                    Progress = (float)compareStopwatch.Elapsed.TotalSeconds,
+                    Message = $"{modelId} を呼び出し中...({position})"
                 });
 
-                results.Add(await CallSingleModelAsync(modelId, prompt, effortLevel, resolvedTemperature, cancellationToken));
+                // 1モデルの生成中も約3秒ごとに通知する(provisioning/057: 以前はモデル切り替え時にしか
+                // 通知せず、遅いモデルの生成中にクライアントに中断された)
+                Action<TimeSpan, int> reportModelProgress = (elapsed, receivedChars) => progress.Report(new ProgressNotificationValue
+                {
+                    Progress = (float)compareStopwatch.Elapsed.TotalSeconds,
+                    Message = $"{modelId} 応答生成中...({position}、経過{elapsed.TotalSeconds:F0}秒、{receivedChars}文字受信済み)"
+                });
+
+                results.Add(await CallSingleModelAsync(modelId, prompt, effortLevel, resolvedTemperature, reportModelProgress, cancellationToken));
             }
 
-            progress.Report(new ProgressNotificationValue { Progress = models.Length, Total = models.Length, Message = "全モデル完了" });
+            progress.Report(new ProgressNotificationValue { Progress = (float)compareStopwatch.Elapsed.TotalSeconds, Message = "全モデル完了" });
 
             _logger.LogInformation(
                 "MCP compare 完了: caller={CallerIp} models={Models} errorCount={ErrorCount}",
@@ -119,7 +131,8 @@ namespace DiscordAIBot
         }
 
         private async Task<ModelComparisonResult> CallSingleModelAsync(
-            string modelId, string prompt, EffortLevel effortLevel, double temperature, CancellationToken cancellationToken)
+            string modelId, string prompt, EffortLevel effortLevel, double temperature,
+            Action<TimeSpan, int> reportProgress, CancellationToken cancellationToken)
         {
             var stopwatch = Stopwatch.StartNew();
 
@@ -158,10 +171,9 @@ namespace DiscordAIBot
                     Effort: effortLevel
                 );
 
-                // ストリーム受信・終了理由の収集・コスト記録はaskと共通(McpModelCall)。
-                // 進捗はCompare側でモデル切り替え時に通知しているためprogressは渡さない
+                // ストリーム受信・終了理由の収集・進捗通知・コスト記録はaskと共通(McpModelCall)
                 var result = await McpModelCall.RunAsync(
-                    _providerFactory(modelMeta.Provider), request, modelMeta, progress: null, cancellationToken);
+                    _providerFactory(modelMeta.Provider), request, modelMeta, reportProgress, cancellationToken);
 
                 // モデル単位の所要時間・終了理由を残す(provisioning/057の調査時、compareの中断が
                 // どのモデルの処理中に起きたかをログから直接特定できなかったため)
