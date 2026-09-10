@@ -67,14 +67,18 @@ namespace DiscordAIBot
         }
 
         [McpServerTool, Description("同じプロンプトを複数のモデルに順番に投げ、それぞれの応答をJSON配列で返して比較する。1モデルの失敗(無効なID・無料枠切れ・コンテキスト超過・呼び出しエラー)は他モデルの結果に影響しない(そのモデルのerrorフィールドに理由が入るのみ)。各モデルの結果にはfinishReasonが含まれ、出力上限などで途中で終わった場合はwarningに注記が入り、本文が空の場合はerrorになる。data sharing前提のOpenAIモデル(gpt-5.6-*)を含めるかどうかはaskツールのmodel引数と同様に呼び出し側の判断に委ねる(ツール側では除外しない)。session_idによる短期履歴には非対応(毎回独立したリクエスト)。モデル数が多い・effortが高いと時間がかかるため、呼び出し中はProgress notificationsで進捗を通知する。")]
+        // 省略可能な引数をスキーマのrequiredから外すため、SDKが渡す特殊な引数(progress/cancellationToken)を
+        // それらより前に置いている(理由はAskTool.Askと同じ)
         public async Task<string> Compare(
             [Description("全モデル共通の質問・依頼内容")] string prompt,
             [Description("比較したいモデルIDの配列(1個以上)。/modelで選択可能なIDと同じ値")] string[] models,
-            [Description("思考の深さ。省略時はMedium。全モデル共通で適用され、モデルが非対応の場合は自動調整される")] string? effort,
-            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルでは無視される")] double? temperature,
             IProgress<ProgressNotificationValue> progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            [Description("思考の深さ。省略時はMedium。全モデル共通で適用され、モデルが非対応の場合は自動調整される")] string? effort = null,
+            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルでは無視される")] double? temperature = null)
         {
+            effort = McpArguments.NormalizeOptional(effort);
+
             if (models is null || models.Length == 0)
             {
                 throw new McpException("modelsには1個以上のモデルIDを指定してください。");

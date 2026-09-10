@@ -99,18 +99,28 @@ namespace DiscordAIBot
         }
 
         [McpServerTool, Description("質問・軽いコード生成をAIモデルに投げ、応答テキストを返します。session_id省略時は毎回独立したリクエスト(履歴なし)。session_idを指定すると、同じIDでの呼び出し間で直前までの会話を踏まえて応答します(有効期限20分、サーバー再起動でも消える使い捨ての短期履歴)。応答が出力上限などで途中で終わった場合は本文の末尾に「[⚠ ...]」の注記(finish_reason・トークン内訳)が付き、本文が空の場合はエラーになります。出力上限はmodels://registryのmaxOutputTokensで確認でき、OpenAIモデル(gpt-5.6-*)では推論トークンもこの上限に含まれます。")]
+        // progress/cancellationTokenはSDKが自動で渡す特殊な引数(スキーマには出ない)。省略可能な引数に
+        // C#のデフォルト値を付けてスキーマのrequiredから外すため、それらより前に置いている(C#では省略可能な
+        // 引数を最後に並べる必要がある。MCPの引数は名前で対応付けられるため、順序は呼び出し側に影響しない)
         public async Task<string> Ask(
             [Description("モデルへの質問・依頼内容")] string prompt,
-            [Description("使用するモデルID(省略時はローカルの既定モデル)。/modelで選択可能なIDと同じ値(例: gemini-3.8-flash, xai/grok-4.6, gpt-5.6-sol)")] string? model,
-            [Description("短期セッションID(任意の文字列)。同じIDを指定して続けて呼ぶと会話が継続する。省略時は毎回独立したリクエスト")] string? session_id,
-            [Description("思考の深さ。省略時はMedium。選択肢: None, Low, Medium, High, XHigh(モデルが非対応の場合は自動調整される)")] string? effort,
-            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルではAPI仕様上デフォルト値のみ受理されるため無視される")] double? temperature,
             IProgress<ProgressNotificationValue> progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            [Description("使用するモデルID(省略時はローカルの既定モデル)。/modelで選択可能なIDと同じ値(例: gemini-3.8-flash, xai/grok-4.6, gpt-5.6-sol)")] string? model = null,
+            [Description("短期セッションID(任意の文字列)。同じIDを指定して続けて呼ぶと会話が継続する。省略時は毎回独立したリクエスト")] string? session_id = null,
+            [Description("思考の深さ。省略時はMedium。選択肢: None, Low, Medium, High, XHigh(モデルが非対応の場合は自動調整される)")] string? effort = null,
+            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルではAPI仕様上デフォルト値のみ受理されるため無視される")] double? temperature = null)
         {
             var callStopwatch = Stopwatch.StartNew();
             string callerIp = _httpContextAccessor.HttpContext?.Connection?.RemoteIpAddress?.ToString() ?? "unknown";
-            string modelId = string.IsNullOrWhiteSpace(model) ? ModelRegistry.DefaultModelId : model;
+
+            // 文字列の"null"/"undefined"/空文字は省略とみなす(文字列"null"がそのまま"null"という名前の
+            // セッション等として扱われる事故を防ぐ、provisioning/057)
+            model = McpArguments.NormalizeOptional(model);
+            session_id = McpArguments.NormalizeOptional(session_id);
+            effort = McpArguments.NormalizeOptional(effort);
+
+            string modelId = model ?? ModelRegistry.DefaultModelId;
 
             // 呼び出し元(Tailscale IP)・session_id・モデルを記録。Tailscale限定バインドで
             // ネットワークレベルの信頼はあるが、「どの端末から」呼ばれたかはこれまで未記録

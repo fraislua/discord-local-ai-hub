@@ -199,7 +199,9 @@ namespace DiscordAIBot
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.StatefulForInitializeClients)
                 .WithTools<AskTool>()
                 .WithTools<CompareModelsTool>()
-                .WithResources<ModelRegistryResource>();
+                .WithResources<ModelRegistryResource>()
+                // 引数をツールの入力スキーマに照らして事前に検証し、不正な引数には理由付きのエラーを返す(McpArguments.cs)
+                .WithRequestFilters(filters => filters.AddCallToolFilter(McpArguments.ValidationFilter));
 
             var webApp = webBuilder.Build();
             webApp.MapGet("/health", () => Results.Ok("ok"));

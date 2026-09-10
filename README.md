@@ -136,6 +136,10 @@ MCP経由でクラウドモデル（Vertex AI / OpenAI）を使用した場合�
 知らせます。本文が空の応答は、`ask`ではエラー、`compare`では該当モデルの`error`になります。
 OpenAIモデルの出力上限（`max_completion_tokens`）は推論トークン込みで32,000です。
 
+ツールの引数は、呼び出し前に入力スキーマに照らして検証します（`McpArguments.cs`）。必須引数の欠落・未知の
+引数名・型の不一致は、どの引数がなぜ不正かを示すエラーになります。省略可能な引数は省略でき、文字列の`"null"`・
+`"undefined"`・空文字は省略として扱います。
+
 ### 提供リソース
 
 | リソース | URI | 内容 |
@@ -181,6 +185,7 @@ OpenAIモデルの出力上限（`max_completion_tokens`）は推論トークン
 | `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
 | `CompareModelsTool.cs` | MCPサーバー機能の`compare`ツール。同じプロンプトを複数モデルに順番に投げ、部分失敗を許容しつつ結果をJSON配列で返す |
 | `McpModelCall.cs` | MCPツール（`ask`/`compare`）共通の1モデル呼び出し処理。ストリーム受信・終了理由（finish_reason）の収集と判定・進捗通知・コスト記録をまとめる |
+| `McpArguments.cs` | MCPツールの引数の検証（入力スキーマに照らした必須・未知・型のチェック）と、文字列の`"null"`等の正規化。ツール呼び出しの前段にフィルターとして組み込む |
 | `ModelRegistryResource.cs` | MCPサーバー機能の`models://registry`リソース。`ModelRegistry.cs`からモデル一覧・コスト特性を動的に生成しJSONで公開 |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |
 | `AttachmentProcessor.cs` | 添付ファイル・画像の処理。メモリ保護機構を内包 |
