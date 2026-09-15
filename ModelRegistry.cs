@@ -42,7 +42,7 @@ namespace DiscordAIBot
                     ModelId = "google/gemma-4-12b-qat",
                     ContextWindow = 32768,
                     MaxOutputTokens = -1,
-                    Description = "デフォルトモデル (画像対応 / ローカル推論)",
+                    Description = "デフォルトモデル-日常会話用-約60tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -55,7 +55,7 @@ namespace DiscordAIBot
                     ModelId = "gemma-4-e4b-uncensored-hauhaucs-aggressive",
                     ContextWindow = 131072,
                     MaxOutputTokens = -1,
-                    Description = "フィルタ緩和モデル (画像対応 / ローカル推論)",
+                    Description = "フィルタ緩和モデル-日常会話用-約100tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -68,7 +68,7 @@ namespace DiscordAIBot
                     ModelId = "qwen/qwen3.8-27b",
                     ContextWindow = 8192,
                     MaxOutputTokens = -1,
-                    Description = "高精度-低速推論 (画像対応 / ローカル推論)",
+                    Description = "難問推論・複雑な設計用-約10tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -84,7 +84,7 @@ namespace DiscordAIBot
                     // (loaded_context_length=65536、ユーザー申告と一致)を登録
                     ContextWindow = 65536,
                     MaxOutputTokens = -1,
-                    Description = "コーディング特化・高速推論(約85tok/sec、ユーザー環境実測) (画像対応 / ローカル推論)",
+                    Description = "コーディング特化モデル-約80tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
