@@ -15,7 +15,14 @@ namespace DiscordAIBot
     {
         private readonly HttpClient _httpClient;
         private readonly string _endpointUrl;
-        
+
+        // LM Studio serves one model at a time: a request for a different model while another
+        // request is still streaming unloads the running model and truncates its output (observed
+        // 2026-09-10). Every caller (Discord chat, MCP ask/compare) shares this single instance, so
+        // this gate serialises all LM Studio requests process-wide, holding the slot until the
+        // stream has been fully consumed, cancelled, or failed.
+        private static readonly SemaphoreSlim _lmStudioGate = new(1, 1);
+
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -72,7 +79,35 @@ namespace DiscordAIBot
                 Stream: true
             );
 
-            string requestJson = JsonSerializer.Serialize(requestBodyObj, _jsonOptions);
+            var waitStart = DateTime.UtcNow;
+            await _lmStudioGate.WaitAsync(cancellationToken);
+            // Nothing may run between acquiring the gate and entering this try block:
+            // any exception thrown here would skip the finally and leak the slot forever.
+            try
+            {
+                var waited = DateTime.UtcNow - waitStart;
+                if (waited.TotalSeconds >= 1)
+                {
+                    Console.WriteLine($"[LmStudio] 他のリクエストの完了を {waited.TotalSeconds:F1} 秒待ってから開始しました(model={request.ModelId})");
+                }
+
+                string requestJson = JsonSerializer.Serialize(requestBodyObj, _jsonOptions);
+
+                await foreach (var chunk in StreamChatCoreAsync(requestJson, cancellationToken))
+                {
+                    yield return chunk;
+                }
+            }
+            finally
+            {
+                _lmStudioGate.Release();
+            }
+        }
+
+        private async IAsyncEnumerable<StreamChunk> StreamChatCoreAsync(
+            string requestJson,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
             using var httpContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpointUrl)
