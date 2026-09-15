@@ -24,13 +24,14 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 
 ## 対応モデル
 
-`/model` コマンドで以下8モデルを切り替えられます（`ModelRegistry.cs`で定義）。
+`/model` コマンドで以下9モデルを切り替えられます（`ModelRegistry.cs`で定義）。
 
 | モデル | 実行先 | 画像対応 |
 |---|---|---|
 | Gemma-4-12B-VLM (`google/gemma-4-12b-qat`) | ローカル (LM Studio) | ○ |
 | Gemma-4-E4B-Uncensored (`gemma-4-e4b-uncensored-hauhaucs-aggressive`) | ローカル (LM Studio) | ○ |
 | Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (LM Studio) | ○ |
+| Ornith-1.5-9B (`ornith-1.5-9b`) | ローカル (LM Studio) | ○ |
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Vertex AI | ○ |
 | Grok 4.6 (`xai/grok-4.6`) | Vertex AI | × (未検証のため無効化) |
 | GPT-5.6 Sol (`gpt-5.6-sol`) | OpenAI API | ○ |

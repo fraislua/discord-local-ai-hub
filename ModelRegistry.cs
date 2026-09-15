@@ -74,6 +74,22 @@ namespace DiscordAIBot
                 }
             },
             {
+                "ornith-1.5-9b",
+                new ModelMetadata
+                {
+                    DisplayName = "Ornith-1.5-9B",
+                    ModelId = "ornith-1.5-9b",
+                    // LM Studio `/api/v0/models`の理論上限は262144だが、qwen3.8-27bの前例(023)を
+                    // 踏まえ理論値は採用せず、ユーザーのデスクトップPCで実際にロードされている値
+                    // (loaded_context_length=65536、ユーザー申告と一致)を登録
+                    ContextWindow = 65536,
+                    MaxOutputTokens = -1,
+                    Description = "コーディング特化・高速推論(約85tok/sec、ユーザー環境実測) (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio
+                }
+            },
+            {
                 "gemini-3.8-flash",
                 new ModelMetadata
                 {

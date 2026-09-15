@@ -88,6 +88,7 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 | (省略/`null`) → `google/gemma-4-12b-qat` | ローカル | **無料** | 既定モデル。迷ったらこれでよい |
 | `gemma-4-e4b-uncensored-hauhaucs-aggressive` | ローカル | 無料 | フィルタ緩和モデル |
 | `qwen/qwen3.8-27b` | ローカル | 無料 | 高精度・低速 |
+| `ornith-1.5-9b` | ローカル | 無料 | コーディング特化・高速(約85tok/sec) |
 | `gemini-3.8-flash` | Vertex AI | 課金対象(共有月$10枠) | 高速・長文脈(100万トークン超) |
 | `xai/grok-4.6` | Vertex AI | 課金対象(共有月$10枠) | |
 | `gpt-5.6-sol` | OpenAI(データ共有) | 日次無料枠25万トークン(単独) | 上限到達で自動的に使用不可になる |
