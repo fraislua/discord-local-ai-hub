@@ -114,8 +114,9 @@ namespace DiscordAIBot
                     if ((DateTime.UtcNow - lastUpdateTime) > _updateInterval)
                     {
                         lastUpdateTime = DateTime.UtcNow;
-                        string textToRender = displayTextBuffer.ToString();
-                        
+                        string permanentText = displayTextBuffer.ToString();
+                        string textToRender = permanentText;
+
                         if (reasoningStartTime.HasValue)
                         {
                             var lines = reasoningBuffer.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -124,8 +125,11 @@ namespace DiscordAIBot
                             textToRender += reasoningPreview;
                         }
 
-                        // 修正箇所: contextId を渡す
-                        var result = await UpdateDiscordMessageAsync(textToRender, currentDiscordMsg, currentStartIndex, contextId);
+                        // 修正箇所: contextIdに加え、確定済み(permanent)テキストの長さを渡す。
+                        // ページ送り(startIndexの前進)は確定済みテキストの長さのみを基準に行い、
+                        // 一時的なthinkingプレビュー(改行が少ないと1950字を超えうる)の伸縮で
+                        // ページ境界がずれて後続の本回答が描画スキップされる不具合を防ぐ
+                        var result = await UpdateDiscordMessageAsync(textToRender, permanentText.Length, currentDiscordMsg, currentStartIndex, contextId);
                         currentDiscordMsg = result.Message;
                         currentStartIndex = result.NextIndex;
                     }
@@ -165,11 +169,14 @@ namespace DiscordAIBot
             
             displayTextBuffer.Append(footer);
 
-            // 修正箇所: contextId を渡し、isFinal を true とする
+            // 修正箇所: contextId を渡し、isFinal を true とする。最終テキストはこの時点で
+            // 全て確定済みのため、permanentLengthは全文の長さと同一
+            string finalText = displayTextBuffer.ToString();
             var finalResult = await UpdateDiscordMessageAsync(
-                displayTextBuffer.ToString(), 
-                currentDiscordMsg, 
-                currentStartIndex, 
+                finalText,
+                finalText.Length,
+                currentDiscordMsg,
+                currentStartIndex,
                 contextId,
                 isFinal: true);
                 
@@ -180,8 +187,9 @@ namespace DiscordAIBot
         }
 
         private async Task<(IUserMessage Message, int NextIndex)> UpdateDiscordMessageAsync(
-            string currentFullText, 
-            IUserMessage currentMsg, 
+            string currentFullText,
+            int permanentLength, // 追加: currentFullTextのうち確定済み(non-preview)部分の長さ
+            IUserMessage currentMsg,
             int startIndex,
             ulong contextId, // 追加: ボタン再構築用コンテキストID
             bool isFinal = false)
@@ -192,40 +200,58 @@ namespace DiscordAIBot
 
             if (formattedText.Length <= startIndex) return (currentMsg, startIndex);
 
+            // ページ送り判定・分割は確定済み部分のみを対象に行う(タグ置換前の生の
+            // permanentLengthで一旦切り出してから同じ置換をかける)
+            string formattedPermanent = currentFullText
+                .Substring(0, Math.Min(permanentLength, currentFullText.Length))
+                .Replace("<image_memory>", "\n\n||🖼️ **画像メモリ:** ")
+                .Replace("</image_memory>", "||\n\n");
+
             // 動的に停止ボタンを再構築
             var stopButton = new ComponentBuilder()
                 .WithButton("🛑 生成を停止", $"stop_{contextId}", ButtonStyle.Danger)
                 .Build();
 
-            while (formattedText.Length - startIndex > MaxDiscordMessageLength)
+            // 修正箇所: ページ送り(新規メッセージへの分割・startIndexの前進)は確定済み
+            // テキスト(formattedPermanent)の長さのみを基準に行う。thinkingプレビュー
+            // (改行が少ないと長くなりうる、かつ思考終了後は消える一時的な文字列)の
+            // 伸縮でページ境界がずれないようにするための変更
+            while (formattedPermanent.Length - startIndex > MaxDiscordMessageLength)
             {
-                string chunkToDisplay = formattedText.Substring(startIndex, MaxDiscordMessageLength);
-                
+                string chunkToDisplay = formattedPermanent.Substring(startIndex, MaxDiscordMessageLength);
+
                 bool isCodeBlockOpen = ((chunkToDisplay.Length - chunkToDisplay.Replace("```", "").Length) / 3) % 2 != 0;
                 if (isCodeBlockOpen)
                 {
-                    chunkToDisplay += "\n```"; 
-                    formattedText = formattedText.Insert(startIndex + MaxDiscordMessageLength, "\n```\n");
+                    chunkToDisplay += "\n```";
+                    formattedPermanent = formattedPermanent.Insert(startIndex + MaxDiscordMessageLength, "\n```\n");
                 }
 
                 // 修正箇所: 文字数上限を超過した場合、古いメッセージのボタンを剥奪する
-                await currentMsg.ModifyAsync(m => 
-                { 
-                    m.Content = chunkToDisplay; 
+                await currentMsg.ModifyAsync(m =>
+                {
+                    m.Content = chunkToDisplay;
                     m.Components = null; // 古いメッセージからボタンを削除
                 });
 
                 startIndex += MaxDiscordMessageLength;
-                
+
                 // 修正箇所: 新しいメッセージに停止ボタンを付与して送信
                 currentMsg = await currentMsg.Channel.SendMessageAsync("*(続きを出力中...)*", components: stopButton);
             }
 
+            // 表示だけはプレビュー分を含むformattedTextの末尾から。確定分がまだページ境界に
+            // 届いていない間にプレビューが表示上限を超える場合、ページ送りはせず表示のみ切り詰める
+            // (プレビューはどうせ思考終了後に消えるため、ここで確定させる必要がない)
             string finalChunk = formattedText.Substring(startIndex);
-            
+            if (finalChunk.Length > MaxDiscordMessageLength)
+            {
+                finalChunk = finalChunk.Substring(0, MaxDiscordMessageLength);
+            }
+
             // 修正箇所: isFinalの真偽に応じてボタンの有無を制御
-            await currentMsg.ModifyAsync(m => 
-            { 
+            await currentMsg.ModifyAsync(m =>
+            {
                 m.Content = finalChunk;
                 m.Components = isFinal ? null : stopButton;
             });
