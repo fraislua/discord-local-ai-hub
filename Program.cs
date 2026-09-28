@@ -643,6 +643,10 @@ namespace DiscordAIBot
 
                 contextId = targetThread.Id;
                 _channelModels.TryAdd(contextId, parentModelId);
+
+                // /effort・/promptもチャンネル本体で設定されていれば新スレッドへ引き継ぐ(/modelと同じ扱い)
+                if (_channelEfforts.TryGetValue(textChannel.Id, out var parentEffort)) _channelEfforts.TryAdd(contextId, parentEffort);
+                if (_channelPrompts.TryGetValue(textChannel.Id, out var parentPromptId)) _channelPrompts.TryAdd(contextId, parentPromptId);
             }
             else
             {
