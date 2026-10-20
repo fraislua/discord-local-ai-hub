@@ -12,7 +12,8 @@ using System.Threading.Tasks;
 
 namespace DiscordAIBot
 {
-    // OpenAI Chat Completions APIを直接呼び出すProvider(gpt-5.6 Sol/Terra/Luna用)。
+    // OpenAI Chat Completions APIを直接呼び出すProvider(gpt-6.1-sol/gpt-6-astra/gpt-5.6-luna用)。
+    // 以下の実機検証は5.6系で行ったもの。6系も同じ挙動であることを075で確認済み(effortの範囲のみ異なる)
     // 実機検証済み(2026-09-09):
     // - 通常の max_tokens は 400 Bad Request で拒否される。max_completion_tokens が必須
     // - reasoning_effort はVertex Grokと同じフラット文字列パラメータ(low/medium/high)で
@@ -81,10 +82,11 @@ namespace DiscordAIBot
                 messages.Add(new OpenAiMessageDto("user", request.CurrentUserText));
             }
 
-            // 実機検証済み(2026-09-09): none/low/medium/high/xhighの5段階は
-            // Sol/Terra/Luna全モデル共通で受理される。maxのみ400で拒否される
-            // (モデル仕様ページの記載はmaxまで対応と誤っていた)
-            string reasoningEffort = request.Effort switch
+            // 実機検証済み(2026-09-09): gpt-5.6系はnone/low/medium/high/xhighの5段階を受理し、
+            // maxのみ400で拒否される(モデル仕様ページの記載はmaxまで対応と誤っていた)。
+            // gpt-6.1-sol/gpt-6-astraはnoneも400で拒否するため(075)、ModelRegistryの
+            // SupportedEffortsの範囲に丸めてから送る
+            string reasoningEffort = ModelRegistry.ClampEffort(request.ModelId, request.Effort) switch
             {
                 EffortLevel.None => "none",
                 EffortLevel.Low => "low",

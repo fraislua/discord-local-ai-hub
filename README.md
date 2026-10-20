@@ -12,10 +12,10 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 ## 主な機能
 
 - **ストリーミング表示** — 商用AIアプリのように、生成テキストがリアルタイムに流れて表示されます（Discordの文字数上限・更新頻度の制約に対応）
-- **マルチプロバイダー対応** — `/model` コマンドでローカルLLM・Vertex AI経由のGemini/Grokをその場で切り替え可能（Factoryパターンによる動的ルーティング）
+- **マルチプロバイダー対応** — `/model` コマンドでローカルLLM・Vertex AI経由のGemini/Grok・OpenAIをその場で切り替え可能（Factoryパターンによる動的ルーティング）
 - **会話コンテキストの保持** — スレッド単位で会話履歴をSQLiteに保存し、モデルを切り替えても文脈を維持
 - **添付ファイル解析** — テキスト / ソースコード（.cs, .py など）/ 画像（VLM対応モデルのみ）の読み込みに対応
-- **思考プロセスの表示** — reasoning対応モデルの `<think>` 内容を折りたたみ表示（LM Studioのreasoningモデル向け。Vertex AI経由のGemini 3.8 Flash / Grok 4.6は内部思考をテキストとして返さないため対象外）
+- **思考プロセスの表示** — reasoning対応モデルの `<think>` 内容を折りたたみ表示（LM Studioのreasoningモデル向け。Vertex AI経由のGemini / Grokは内部思考をテキストとして返さないため対象外）
 - **省リソース環境向けの防御的実装**
   - 画像のDecompression Bomb対策（Content-Lengthチェック → ダウンロード中のサイズ監視 → ピクセル総数制限の3段防御）
   - トークナイザーによる厳密なコンテキスト管理と履歴の自動トリミング
@@ -24,7 +24,7 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 
 ## 対応モデル
 
-`/model` コマンドで以下9モデルを切り替えられます（`ModelRegistry.cs`で定義）。
+`/model` コマンドで以下10モデルを切り替えられます（`ModelRegistry.cs`で定義）。
 
 | モデル | 実行先 | 画像対応 |
 |---|---|---|
@@ -33,13 +33,14 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 | Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (LM Studio) | ○ |
 | Ornith-1.5-9B (`ornith-1.5-9b`) | ローカル (LM Studio) | ○ |
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Vertex AI | ○ |
-| Grok 4.6 (`xai/grok-4.6`) | Vertex AI | × (未検証のため無効化) |
-| GPT-5.6 Sol (`gpt-5.6-sol`) | OpenAI API | ○ |
-| GPT-5.6 Terra (`gpt-5.6-terra`) | OpenAI API | ○ |
+| Gemini 4 Argon (`gemini-4-argon`) | Vertex AI | ○ |
+| Grok 4.7 (`xai/grok-4.7`) | Vertex AI (プレビュー) | × (VertexGrokProviderが画像を送らないため無効) |
+| GPT-6.1 Sol (`gpt-6.1-sol`) | OpenAI API | ○ |
+| GPT-6 Astra (`gpt-6-astra`) | OpenAI API | ○ |
 | GPT-5.6 Luna (`gpt-5.6-luna`) | OpenAI API | ○ |
 
-GPT-5.6系はOpenAIのデータ共有プログラム(無料枠)を前提とした運用（`OpenAiQuota.cs`）。
-Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日の日次上限があり、
+OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした運用（`OpenAiQuota.cs`）。
+6.1 Sol+Astraは合算で25万トークン/日(大型枠)、Lunaは250万トークン/日(軽量枠)の日次上限があり、
 `Program.cs`側で送信前に事前チェックし、上限に達する場合は課金を避けるため送信自体を
 拒否する（実際に上限に達した実績は無いため、値は公称値ベースで要継続確認）。
 
@@ -80,7 +81,7 @@ Sol単独で25万トークン/日、Terra+Lunaは合算で250万トークン/日
    | `GoogleAdcCredentialPath` | Vertex AI認証用ADC JSONファイルへのパス（例: `secrets/google-adc.json`。**git管理対象外・絶対にコミットしないこと**） |
    | `VertexProjectId` | Vertex AIを呼び出すGoogle CloudプロジェクトID |
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
-   | `OpenAiApiKey` | OpenAI APIキー（GPT-5.6 Sol/Terra/Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
+   | `OpenAiApiKey` | OpenAI APIキー（GPT-6.1 Sol / GPT-6 Astra / GPT-5.6 Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
    | `McpListenUrl` | MCPサーバー(Kestrel)の待受URL。**Tailscale IPを明示的に指定すること**（例: `http://100.x.x.x:5100`）。`0.0.0.0`を指定するとLAN内からもアクセス可能になるため使用しないこと |
 
 3. トークン数カウント用に、使用モデル（Gemma 4）の `tokenizer.json` を実行ファイルと同じディレクトリに配置します（Hugging Faceのモデルページから入手できます。未配置の場合は文字数ベースの概算モードで動作します）。
@@ -181,7 +182,7 @@ OpenAIモデルの出力上限（`max_completion_tokens`）は推論トークン
 | `GoogleAdcTokenProvider.cs` | ADC(Application Default Credentials)からVertex AI用アクセストークンを取得（ライブラリ側キャッシュ・自動リフレッシュに依存） |
 | `VertexGeminiProvider.cs` | Vertex AIネイティブエンドポイント経由のGemini通信。ロール交互制約等はGoogleAiStudioProviderと同一ロジック |
 | `VertexGrokProvider.cs` | Vertex AIのOpenAI互換エンドポイント経由のGrok通信 |
-| `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-5.6 Sol/Terra/Luna） |
+| `OpenAiProvider.cs` | OpenAI Chat Completions APIとの直接通信（GPT-6.1 Sol / GPT-6 Astra / GPT-5.6 Luna） |
 | `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
 | `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
 | `CompareModelsTool.cs` | MCPサーバー機能の`compare`ツール。同じプロンプトを複数モデルに順番に投げ、部分失敗を許容しつつ結果をJSON配列で返す |

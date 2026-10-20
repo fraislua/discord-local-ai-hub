@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DiscordAIBot
 {
@@ -104,53 +106,71 @@ namespace DiscordAIBot
                 }
             },
             {
-                "xai/grok-4.6",
+                "gemini-4-argon",
                 new ModelMetadata
                 {
-                    DisplayName = "Grok 4.6",
-                    ModelId = "xai/grok-4.6",
+                    DisplayName = "Gemini 4 Argon",
+                    ModelId = "gemini-4-argon",
+                    ContextWindow = 1048576,
+                    // Gemini 3.8 Flash(8192)より推論が深い上位モデルのため、思考で上限を使い切らないよう
+                    // OpenAIと同じ32,000とした(Vertexには無料枠の事前ブロックが無く、予約量の制約も無い)
+                    MaxOutputTokens = 32000,
+                    Description = "Google最上位モデル (Vertex AI)",
+                    IsVlm = true,
+                    Provider = ApiProvider.VertexGemini,
+                    // MINIMAL・XHIGHは実機で拒否(400)を確認(075)。3.8 Flashと同じ3段階
+                    SupportedEfforts = new[] { EffortLevel.Low, EffortLevel.Medium, EffortLevel.High }
+                }
+            },
+            {
+                "xai/grok-4.7",
+                new ModelMetadata
+                {
+                    DisplayName = "Grok 4.7",
+                    ModelId = "xai/grok-4.7",
                     ContextWindow = 500000,
                     MaxOutputTokens = 8192,
-                    Description = "xAI Grok (Vertex AI)",
+                    Description = "xAI Grok (Vertex AI / プレビュー)",
+                    // xAI公式は画像入力対応だが、VertexGrokProviderが画像をリクエストに含めない実装のため無効
                     IsVlm = false,
                     Provider = ApiProvider.VertexGrok,
-                    // Noneは実機検証済みの"minimal"にマップ(026)。XHigh/Maxは実機で拒否済みのため含めない
+                    // Noneは"minimal"にマップ。xhigh・maxはVertex経由では実機で拒否(075、4.6と同じ)
                     SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High }
                 }
             },
             {
-                "gpt-5.6-sol",
+                "gpt-6.1-sol",
                 new ModelMetadata
                 {
-                    DisplayName = "GPT-5.6 Sol",
-                    ModelId = "gpt-5.6-sol",
+                    DisplayName = "GPT-6.1 Sol",
+                    ModelId = "gpt-6.1-sol",
                     ContextWindow = 1050000,
                     // max_completion_tokensとして送る値。OpenAIでは推論トークンもこの上限に含まれ、
                     // 8192ではeffort=High等で本文が空・途中切れになる実害があった(provisioning/057)。
                     // 公式上限は128,000だが、Program.csの無料枠事前ブロックがこの値を1回分の予約量として
-                    // 使うため、枠の小さいSol(25万/日)で実際に使える量との兼ね合いで32,000とした
+                    // 使うため、大型枠(25万/日)で実際に使える量との兼ね合いで32,000とした
                     MaxOutputTokens = 32000,
-                    Description = "OpenAI最上位モデル (無料枠 25万トークン/日)",
+                    Description = "OpenAI標準モデル (無料枠 25万トークン/日、Astraと共有)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
-                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
-                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
+                    // noneは実機で拒否(400)を確認(075)
+                    SupportedEfforts = new[] { EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             },
             {
-                "gpt-5.6-terra",
+                "gpt-6-astra",
                 new ModelMetadata
                 {
-                    DisplayName = "GPT-5.6 Terra",
-                    ModelId = "gpt-5.6-terra",
+                    DisplayName = "GPT-6 Astra",
+                    ModelId = "gpt-6-astra",
                     ContextWindow = 1050000,
-                    // 推論トークン込みの上限。Solと揃えて32,000(理由はSolのコメント参照)
+                    // 推論トークン込みの上限。6.1 Solと揃えて32,000(理由は6.1 Solのコメント参照)
                     MaxOutputTokens = 32000,
-                    Description = "OpenAIバランス型モデル (無料枠 250万トークン/日、Lunaと共有)",
+                    Description = "OpenAI最上位モデル (無料枠 25万トークン/日、6.1 Solと共有)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
-                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
-                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
+                    // noneは実機で拒否(400)を確認(075)
+                    SupportedEfforts = new[] { EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             },
             {
@@ -160,15 +180,35 @@ namespace DiscordAIBot
                     DisplayName = "GPT-5.6 Luna",
                     ModelId = "gpt-5.6-luna",
                     ContextWindow = 1050000,
-                    // 推論トークン込みの上限。Solと揃えて32,000(理由はSolのコメント参照)
+                    // 推論トークン込みの上限。6.1 Solと揃えて32,000(理由は6.1 Solのコメント参照)
                     MaxOutputTokens = 32000,
-                    Description = "OpenAI高速・低コストモデル (無料枠 250万トークン/日、Terraと共有)",
+                    Description = "OpenAI高速・低コストモデル (無料枠 250万トークン/日)",
                     IsVlm = true,
                     Provider = ApiProvider.OpenAi,
-                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は3モデル共通で受理される
+                    // maxのみ実機で拒否(400)を確認。それ以外の5段階は受理される
                     SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.High, EffortLevel.XHigh }
                 }
             }
         };
+
+        // SupportedEffortsに無い段階を、対応範囲内で最も近い段階に丸める(同距離なら低い方)。
+        // チャンネルのeffortはモデルを切り替えても残るため、例えばNoneのままgpt-6.1-solに
+        // 切り替えると、そのままでは400になる(075)。SupportedEffortsが未指定のモデルは
+        // 各Provider側のクランプに任せ、そのまま返す
+        public static EffortLevel ClampEffort(string modelId, EffortLevel requested)
+        {
+            if (!AvailableModels.TryGetValue(modelId, out var meta) || meta.SupportedEfforts is not { Count: > 0 } supported)
+            {
+                return requested;
+            }
+            if (supported.Contains(requested))
+            {
+                return requested;
+            }
+            return supported
+                .OrderBy(level => Math.Abs((int)level - (int)requested))
+                .ThenBy(level => (int)level)
+                .First();
+        }
     }
 }
