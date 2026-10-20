@@ -83,6 +83,7 @@ OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
    | `OpenAiApiKey` | OpenAI APIキー（GPT-6.1 Sol / GPT-6 Astra / GPT-5.6 Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
    | `McpListenUrl` | MCPサーバー(Kestrel)の待受URL。**Tailscale IPを明示的に指定すること**（例: `http://100.x.x.x:5100`）。`0.0.0.0`を指定するとLAN内からもアクセス可能になるため使用しないこと |
+   | `WebUiApiKey` | （任意）OpenAI互換窓口（`/v1`）のAPIキー。Open WebUI等のクライアントに`Authorization: Bearer`で送らせる。未設定なら`/v1`は無効 |
 
 3. トークン数カウント用に、使用モデル（Gemma 4）の `tokenizer.json` を実行ファイルと同じディレクトリに配置します（Hugging Faceのモデルページから入手できます。未配置の場合は文字数ベースの概算モードで動作します）。
 
@@ -170,6 +171,23 @@ OpenAIモデルの出力上限（`max_completion_tokens`）は推論トークン
   トラブルシューティング目的の可視化であり、アクセス制御自体は上記のネットワークレベルの
   多層防御に引き続き依存する
 
+## OpenAI互換窓口（Web UI用）
+
+Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル群を使うための窓口。MCPと同じKestrel
+（`McpListenUrl`、Tailscale IP限定）で、`WebUiApiKey`を設定した場合のみ有効になる（`OpenAiCompatEndpoints.cs`）。
+
+- `GET <McpListenUrl>/v1/models` / `POST <McpListenUrl>/v1/chat/completions`（`Authorization: Bearer <WebUiApiKey>`必須）
+- クライアントから各APIやLM Studioへ直接つながせず、MCPと同じ`McpModelCall`経由で呼ぶ。無料枠の事前ブロック・
+  コスト記録（`UsageRecords`の`Source=webui`、途中切断は`webui-cancelled`）・LM Studio要求の直列化をDiscord/MCPと共有する
+- ステートレス: 会話履歴はクライアント側が持ち、毎回`messages`に会話全体が届く前提。system/developerはシステム
+  プロンプト、最後のuserが今回の入力、それより前が履歴。コンテキスト上限を超える分は古い履歴から削る
+- `stream`の有無両対応。ストリームではLM Studioのreasoningモデルの思考を`reasoning_content`として中継し、
+  思考中に本文を流さないモデル（Vertex経由のGemini等）のために15秒ごとにSSEのコメント行を送って接続を保つ
+- `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はMedium
+- 画像は今回の入力のみ、data URI（base64）のみ受け付ける（外部URLは取りに行かない）。Discordの添付と同じ
+  サイズ・解像度制限と長辺1024pxへの縮小を通す。履歴中の画像は`[画像]`という文字に置き換える
+- 出力上限で切れた等の場合はMCPの`ask`と同じ注記を本文末尾に付ける。ツール呼び出し（function calling）は非対応
+
 ## ファイル構成
 
 | ファイル | 役割 |
@@ -186,7 +204,8 @@ OpenAIモデルの出力上限（`max_completion_tokens`）は推論トークン
 | `OpenAiQuota.cs` | OpenAIデータ共有プログラムの日次無料枠プール定義（大型枠/軽量枠） |
 | `AskTool.cs` | MCPサーバー機能の`ask`ツール。Discord側のオーケストレーションを経由せずIAiProviderを直接呼ぶステートレスな単発呼び出し |
 | `CompareModelsTool.cs` | MCPサーバー機能の`compare`ツール。同じプロンプトを複数モデルに順番に投げ、部分失敗を許容しつつ結果をJSON配列で返す |
-| `McpModelCall.cs` | MCPツール（`ask`/`compare`）共通の1モデル呼び出し処理。ストリーム受信・終了理由（finish_reason）の収集と判定・進捗通知・コスト記録をまとめる |
+| `OpenAiCompatEndpoints.cs` | OpenAI互換窓口（`/v1/models`・`/v1/chat/completions`）。Open WebUI等から使う |
+| `McpModelCall.cs` | MCPツール（`ask`/`compare`）とOpenAI互換窓口共通の1モデル呼び出し処理。ストリーム受信・終了理由（finish_reason）の収集と判定・進捗通知・コスト記録をまとめる |
 | `McpArguments.cs` | MCPツールの引数の検証（入力スキーマに照らした必須・未知・型のチェック）と、文字列の`"null"`等の正規化。ツール呼び出しの前段にフィルターとして組み込む |
 | `ModelRegistryResource.cs` | MCPサーバー機能の`models://registry`リソース。`ModelRegistry.cs`からモデル一覧・コスト特性を動的に生成しJSONで公開 |
 | `StreamResponseHandler.cs` | ストリーミング表示。Discordメッセージの分割・更新制御 |

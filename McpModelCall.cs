@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace DiscordAIBot
 {
-    // MCPツール(ask/compare)共通の「1モデル呼び出し」処理。ストリーム受信・終了理由の収集・
+    // MCPツール(ask/compare)とOpenAI互換窓口(OpenAiCompatEndpoints、076)共通の「1モデル呼び出し」処理。ストリーム受信・終了理由の収集・
     // 進捗通知・コスト記録を1か所にまとめ、両ツールで同じ受信ループを二重に持たないようにする。
     // Discord側(StreamResponseHandler)はフッターの`Reason: length`等で人間に切り捨てを知らせるが、
     // MCP経由では終了理由を捨てていたため、呼び出し元のAIエージェントが「書き終えた」のか
@@ -40,6 +40,8 @@ namespace DiscordAIBot
         // conservativePromptTokensは、途中で打ち切られてusageが届かなかった場合の推定記録に使う
         // (CostEstimator.EstimatePromptTokensConservativelyで換算済みの値)。
         // reportProgressがnullでなければ、呼び出し中は約3秒ごとに(経過時間, 受信済み文字数)で呼び出す。
+        // onChunkがnullでなければ、受信したチャンクをそのまま渡す(OpenAI互換窓口のストリーム中継用)。
+        // sourceはUsageRecordsのSource。途中で打ち切られて推定記録する場合は"{source}-cancelled"になる。
         // 通知はチャンクの到着とは無関係なタイマーで行う。以前はチャンク受信ループの中で通知していたため、
         // 最初のトークンが届くまでの待ち(ローカルモデルのロード等)や、本文チャンクを流さない推論フェーズ
         // (OpenAI/Grok)の間は無通知になり、compareでは1モデルの生成中ずっと無通知だった
@@ -50,7 +52,9 @@ namespace DiscordAIBot
             ModelMetadata modelMeta,
             int conservativePromptTokens,
             Action<TimeSpan, int>? reportProgress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string source = "mcp",
+            Func<StreamChunk, CancellationToken, Task>? onChunk = null)
         {
             var responseText = new StringBuilder();
             int receivedChars = 0; // タイマー側から読むため、StringBuilderとは別にInterlockedで更新する
@@ -72,6 +76,8 @@ namespace DiscordAIBot
             {
                 await foreach (var chunk in provider.StreamChatAsync(request, cancellationToken))
                 {
+                    if (onChunk != null) await onChunk(chunk, cancellationToken);
+
                     if (!chunk.IsReasoning && chunk.TextDelta is { Length: > 0 })
                     {
                         responseText.Append(chunk.TextDelta);
@@ -96,11 +102,11 @@ namespace DiscordAIBot
                 // 「OpenAI API 通信エラー」に包まれて記録から漏れたため)
                 if (promptTokens.HasValue)
                 {
-                    await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, "mcp", CancellationToken.None);
+                    await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, source, CancellationToken.None);
                 }
                 else
                 {
-                    await RecordUsageAsync(modelMeta, conservativePromptTokens, Math.Max(modelMeta.MaxOutputTokens, 0), 0, "mcp-cancelled", CancellationToken.None);
+                    await RecordUsageAsync(modelMeta, conservativePromptTokens, Math.Max(modelMeta.MaxOutputTokens, 0), 0, $"{source}-cancelled", CancellationToken.None);
                 }
                 throw;
             }
@@ -113,7 +119,7 @@ namespace DiscordAIBot
             }
 
             double? estimatedCost = promptTokens.HasValue
-                ? await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, "mcp", cancellationToken)
+                ? await RecordUsageAsync(modelMeta, promptTokens.Value, completionTokens ?? 0, reasoningTokens ?? 0, source, cancellationToken)
                 : null;
 
             return new Result(responseText.ToString(), finishReason, promptTokens, completionTokens, reasoningTokens, estimatedCost);

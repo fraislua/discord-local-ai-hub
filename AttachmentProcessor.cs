@@ -143,15 +143,28 @@ namespace DiscordAIBot
             }
             
             memoryStream.Position = 0;
+            return await NormalizeImageToJpegBase64Async(memoryStream, cancellationToken);
+        }
 
-            using var image = await SixLabors.ImageSharp.Image.LoadAsync(memoryStream, cancellationToken);
+        // 画像のバイト列を、ピクセル数の検証・長辺1024pxへの縮小・JPEG化をしてBase64(プレフィックス無し)にする。
+        // Discordの添付とOpenAI互換窓口(076、data URIで届く画像)で共通。
+        // ダウンロード・デコード時点での上限超過は呼び出し側で先に弾く(メモリに載せる前に止めるため)
+        public static async Task<string> NormalizeImageToJpegBase64Async(Stream imageStream, CancellationToken cancellationToken)
+        {
+            if (imageStream.Length > MaxFileSizeLimitBytes)
+            {
+                throw new Exception($"ファイルサイズが制限（{MaxFileSizeLimitBytes / 1024 / 1024}MB）を超過しています。");
+            }
 
-            // 防御3: ピクセル総数制限（Decompression Bomb対策）
-            long totalPixels = (long)image.Width * image.Height;
-            if (totalPixels > MaxPixelsLimit)
+            // 防御3: ピクセル総数制限（Decompression Bomb対策）。展開前にヘッダだけで判定する
+            var info = await SixLabors.ImageSharp.Image.IdentifyAsync(imageStream, cancellationToken);
+            if ((long)info.Width * info.Height > MaxPixelsLimit)
             {
                 throw new Exception("画像ファイルの解像度が制限を超過しており、メモリ不足の恐れがあります（Decompression Bomb保護）。");
             }
+            imageStream.Position = 0;
+
+            using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageStream, cancellationToken);
 
             if (image.Width > MaxImageDimension || image.Height > MaxImageDimension)
             {

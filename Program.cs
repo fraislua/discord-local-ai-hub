@@ -35,6 +35,8 @@ namespace DiscordAIBot
         private string _vertexRegion = string.Empty;
         private string _openAiApiKey = string.Empty;
         private string _mcpListenUrl = string.Empty;
+        // OpenAI互換窓口(/v1、Open WebUI用)のAPIキー。未設定なら/v1を公開しない(076)
+        private string _webUiApiKey = string.Empty;
 
         private ulong _chatAiChannelId;
         private bool _usageTopicUpdaterStarted = false;
@@ -84,6 +86,7 @@ namespace DiscordAIBot
                 _vertexRegion = config["BotSettings:VertexRegion"] ?? throw new Exception("VertexRegionが設定されていません。");
                 _openAiApiKey = config["BotSettings:OpenAiApiKey"] ?? throw new Exception("OpenAiApiKeyが設定されていません。");
                 _mcpListenUrl = config["BotSettings:McpListenUrl"] ?? throw new Exception("McpListenUrlが設定されていません。");
+                _webUiApiKey = config["BotSettings:WebUiApiKey"] ?? string.Empty;
 
                 if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId))
                 {
@@ -206,6 +209,17 @@ namespace DiscordAIBot
             var webApp = webBuilder.Build();
             webApp.MapGet("/health", () => Results.Ok("ok"));
             webApp.MapMcp("/mcp");
+
+            // Open WebUI等のOpenAI互換クライアント向けの窓口(076)。MCPと同じTailscale IP限定の
+            // 待ち受けに加え、別LXCのOpen WebUIだけが持つAPIキーを必須にする
+            if (!string.IsNullOrWhiteSpace(_webUiApiKey))
+            {
+                OpenAiCompatEndpoints.Map(webApp, _webUiApiKey);
+            }
+            else
+            {
+                Console.WriteLine("[情報] WebUiApiKeyが未設定のため、OpenAI互換窓口(/v1)は無効です。");
+            }
 
             await webApp.RunAsync();
         }
