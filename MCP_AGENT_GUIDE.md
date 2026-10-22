@@ -85,10 +85,12 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 
 | model ID | 実行先 | コスト | 備考 |
 |---|---|---|---|
-| (省略/`null`) → `google/gemma-4-12b-qat` | ローカル | **無料** | デフォルトモデル・日常会話用・約60tok/sec |
-| `gemma-4-e4b-uncensored-hauhaucs-aggressive` | ローカル | 無料 | フィルタ緩和モデル・日常会話用・約100tok/sec |
-| `qwen/qwen3.8-27b` | ローカル | 無料 | 難問推論・複雑な設計用・約10tok/sec |
-| `ornith-1.5-9b` | ローカル | 無料 | コーディング特化モデル・約80tok/sec |
+| (省略/`null`) → `google/gemma-4-12b-qat` | ローカル | **無料** | デフォルトモデル・日常会話用・約70tok/sec |
+| `gemma-4-e4b-uncensored-hauhaucs-aggressive` | ローカル | 無料 | フィルタ緩和モデル・日常会話用・約130tok/sec |
+| `qwen/qwen3.8-27b` | ローカル | 無料 | 難問推論・複雑な設計用・約65tok/sec。文脈は8K |
+| `qwen3.8-27b-32k` | ローカル | 無料 | 上と同じモデルの長文版(32K)・約45tok/sec |
+| `qwen3.6-35b-a3b` | ローカル | 無料 | MoE型・長文脈(64K)・約60tok/sec。賢さは27Bより下 |
+| `ornith-1.5-9b` | ローカル | 無料 | コーディング特化モデル・約100tok/sec |
 | `gemini-3.8-flash` | Vertex AI | 課金対象(共有月$10枠) | 高速・長文脈(100万トークン超) |
 | `gemini-4-argon` | Vertex AI | 課金対象(共有月$10枠) | Google最上位。単価は3.8 Flashの約2.7倍 |
 | `xai/grok-4.7` | Vertex AI | 課金対象(共有月$10枠) | プレビュー版。画像入力は非対応(本サーバー側の制約) |

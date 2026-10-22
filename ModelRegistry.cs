@@ -44,7 +44,7 @@ namespace DiscordAIBot
                     ModelId = "google/gemma-4-12b-qat",
                     ContextWindow = 32768,
                     MaxOutputTokens = -1,
-                    Description = "デフォルトモデル-日常会話用-約60tok/sec (画像対応 / ローカル推論)",
+                    Description = "デフォルトモデル-日常会話用-約70tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -57,7 +57,7 @@ namespace DiscordAIBot
                     ModelId = "gemma-4-e4b-uncensored-hauhaucs-aggressive",
                     ContextWindow = 131072,
                     MaxOutputTokens = -1,
-                    Description = "フィルタ緩和モデル-日常会話用-約100tok/sec (画像対応 / ローカル推論)",
+                    Description = "フィルタ緩和モデル-日常会話用-約130tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -70,7 +70,35 @@ namespace DiscordAIBot
                     ModelId = "qwen/qwen3.8-27b",
                     ContextWindow = 8192,
                     MaxOutputTokens = -1,
-                    Description = "難問推論・複雑な設計用-約10tok/sec (画像対応 / ローカル推論)",
+                    Description = "難問推論・複雑な設計用-約65tok/sec (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio
+                }
+            },
+            {
+                // qwen/qwen3.8-27bと同じGGUFをMTP投機的デコードなしで起動する長文版(082)。
+                // MTPありは12GBのVRAMに8Kまでしか載らないため、文脈長が要るときはこちら
+                "qwen3.8-27b-32k",
+                new ModelMetadata
+                {
+                    DisplayName = "Qwen3.8-27B-32K",
+                    ModelId = "qwen3.8-27b-32k",
+                    ContextWindow = 32768,
+                    MaxOutputTokens = -1,
+                    Description = "難問推論・長文用(32K)-約45tok/sec (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio
+                }
+            },
+            {
+                "qwen3.6-35b-a3b",
+                new ModelMetadata
+                {
+                    DisplayName = "Qwen3.6-35B-A3B",
+                    ModelId = "qwen3.6-35b-a3b",
+                    ContextWindow = 65536,
+                    MaxOutputTokens = -1,
+                    Description = "MoE型-長文脈(64K)-約60tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -81,12 +109,12 @@ namespace DiscordAIBot
                 {
                     DisplayName = "Ornith-1.5-9B",
                     ModelId = "ornith-1.5-9b",
-                    // LM Studio `/api/v0/models`の理論上限は262144だが、qwen3.8-27bの前例(023)を
+                    // (LM Studio時代の記録)`/api/v0/models`の理論上限は262144だが、qwen3.8-27bの前例(023)を
                     // 踏まえ理論値は採用せず、ユーザーのデスクトップPCで実際にロードされている値
                     // (loaded_context_length=65536、ユーザー申告と一致)を登録
                     ContextWindow = 65536,
                     MaxOutputTokens = -1,
-                    Description = "コーディング特化モデル-約80tok/sec (画像対応 / ローカル推論)",
+                    Description = "コーディング特化モデル-約100tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }

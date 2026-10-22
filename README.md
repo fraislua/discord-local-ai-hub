@@ -1,11 +1,11 @@
 # Discord統合パーソナルAI推論システム
 
-Discordをフロントエンドとして、自宅のローカルLLM（LM Studio）とクラウドAI（Vertex AI経由のGemini・Grok、OpenAI）を切り替えて利用できる自分専用のAIチャットシステムです。同一プロセス内で、Tailscale経由のMCPサーバー機能（Claude Code等からの直接呼び出し）も提供します。
+Discordをフロントエンドとして、自宅のローカルLLM（llama.cpp / llama-swap）とクラウドAI（Vertex AI経由のGemini・Grok、OpenAI）を切り替えて利用できる自分専用のAIチャットシステムです。同一プロセス内で、Tailscale経由のMCPサーバー機能（Claude Code等からの直接呼び出し）も提供します。
 
-24時間稼働のミニPC（Proxmox LXC: 2コア / RAM 1GB）上でBotを常時稼働させ、重い推論処理はデスクトップPC上のLM Studio、またはクラウドAPIへルーティングする3層構成になっています。
+24時間稼働のミニPC（Proxmox LXC: 2コア / RAM 1GB）上でBotを常時稼働させ、重い推論処理はデスクトップPC上のllama.cpp（llama-swap経由）、またはクラウドAPIへルーティングする3層構成になっています。
 
 ```
-[Discord]     ⇄ [ミニPC: Discord Bot (中継サーバー)] ⇄ [デスクトップPC: LM Studio]
+[Discord]     ⇄ [ミニPC: Discord Bot (中継サーバー)] ⇄ [デスクトップPC: llama-swap + llama.cpp]
 [Claude Code] ⇄ [       ↑ 同一プロセス、MCPサーバー]  ⇄ [Vertex AI (Gemini / Grok) / OpenAI]
 ```
 
@@ -15,7 +15,7 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 - **マルチプロバイダー対応** — `/model` コマンドでローカルLLM・Vertex AI経由のGemini/Grok・OpenAIをその場で切り替え可能（Factoryパターンによる動的ルーティング）
 - **会話コンテキストの保持** — スレッド単位で会話履歴をSQLiteに保存し、モデルを切り替えても文脈を維持
 - **添付ファイル解析** — テキスト / ソースコード（.cs, .py など）/ 画像（VLM対応モデルのみ）の読み込みに対応
-- **思考プロセスの表示** — reasoning対応モデルの `<think>` 内容を折りたたみ表示（LM Studioのreasoningモデル向け。Vertex AI経由のGemini / Grokは内部思考をテキストとして返さないため対象外）
+- **思考プロセスの表示** — reasoning対応モデルの `<think>` 内容を折りたたみ表示（ローカルのreasoningモデル向け。Vertex AI経由のGemini / Grokは内部思考をテキストとして返さないため対象外）
 - **省リソース環境向けの防御的実装**
   - 画像のDecompression Bomb対策（Content-Lengthチェック → ダウンロード中のサイズ監視 → ピクセル総数制限の3段防御）
   - トークナイザーによる厳密なコンテキスト管理と履歴の自動トリミング
@@ -28,10 +28,12 @@ Discordをフロントエンドとして、自宅のローカルLLM（LM Studio�
 
 | モデル | 実行先 | 画像対応 |
 |---|---|---|
-| Gemma-4-12B-VLM (`google/gemma-4-12b-qat`) | ローカル (LM Studio) | ○ |
-| Gemma-4-E4B-Uncensored (`gemma-4-e4b-uncensored-hauhaucs-aggressive`) | ローカル (LM Studio) | ○ |
-| Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (LM Studio) | ○ |
-| Ornith-1.5-9B (`ornith-1.5-9b`) | ローカル (LM Studio) | ○ |
+| Gemma-4-12B-VLM (`google/gemma-4-12b-qat`) | ローカル (llama.cpp) | ○ |
+| Gemma-4-E4B-Uncensored (`gemma-4-e4b-uncensored-hauhaucs-aggressive`) | ローカル (llama.cpp) | ○ |
+| Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (llama.cpp) | ○ |
+| Qwen3.8-27B-32K (`qwen3.8-27b-32k`) | ローカル (llama.cpp) | ○ |
+| Qwen3.6-35B-A3B (`qwen3.6-35b-a3b`) | ローカル (llama.cpp) | ○ |
+| Ornith-1.5-9B (`ornith-1.5-9b`) | ローカル (llama.cpp) | ○ |
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Vertex AI | ○ |
 | Gemini 4 Argon (`gemini-4-argon`) | Vertex AI | ○ |
 | Grok 4.7 (`xai/grok-4.7`) | Vertex AI (プレビュー) | × (VertexGrokProviderが画像を送らないため無効) |
@@ -48,7 +50,7 @@ OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした
 
 - .NET 8 以降
 - Discord Bot（Message Content Intent 有効）
-- LM Studio（デスクトップPC側でサーバーモード起動。モデルの自動ロード/切替に対応 — 詳細は「注意事項」参照）
+- llama-swap + llama.cpp（デスクトップPC側。OpenAI互換の`/v1`で、モデルの自動ロード/切替に対応 — 詳細は「注意事項」参照。LM Studioのサーバーモードでも動く）
 - Google Cloudプロジェクト（Vertex AI API有効化済み、ADC(Application Default Credentials)のJSON認証情報）
 - Google AI Studio APIキー（現在は割り当てモデル無し。将来的な復帰用に設定項目のみ残置）
 - Tailscale（MCPサーバー機能を使う場合。ホスト・接続元の両方が同一Tailnetに参加している必要あり）
@@ -75,7 +77,7 @@ OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした
    | キー | 内容 |
    |---|---|
    | `Token` | Discord Botのトークン |
-   | `LmStudioEndpoint` | LM StudioのAPIエンドポイント（例: `http://<デスクトップPCのIP>:1234/v1/chat/completions`） |
+   | `LmStudioEndpoint` | ローカルLLM（llama-swap、またはLM Studio）のOpenAI互換エンドポイント（例: `http://<デスクトップPCのIP>:8080/v1/chat/completions`）。設定名はLM Studio時代のまま |
    | `GeminiApiKey` | Google AI StudioのAPIキー（現在は割り当てモデル無し。当面残置） |
    | `ChatAiChannelId` | AI対話用チャンネルのID |
    | `GoogleAdcCredentialPath` | Vertex AI認証用ADC JSONファイルへのパス（例: `secrets/google-adc.json`。**git管理対象外・絶対にコミットしないこと**） |
@@ -177,11 +179,11 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
 （`McpListenUrl`、Tailscale IP限定）で、`WebUiApiKey`を設定した場合のみ有効になる（`OpenAiCompatEndpoints.cs`）。
 
 - `GET <McpListenUrl>/v1/models` / `POST <McpListenUrl>/v1/chat/completions`（`Authorization: Bearer <WebUiApiKey>`必須）
-- クライアントから各APIやLM Studioへ直接つながせず、MCPと同じ`McpModelCall`経由で呼ぶ。無料枠の事前ブロック・
-  コスト記録（`UsageRecords`の`Source=webui`、途中切断は`webui-cancelled`）・LM Studio要求の直列化をDiscord/MCPと共有する
+- クライアントから各APIやローカルLLMへ直接つながせず、MCPと同じ`McpModelCall`経由で呼ぶ。無料枠の事前ブロック・
+  コスト記録（`UsageRecords`の`Source=webui`、途中切断は`webui-cancelled`）・ローカルLLM要求の直列化をDiscord/MCPと共有する
 - ステートレス: 会話履歴はクライアント側が持ち、毎回`messages`に会話全体が届く前提。system/developerはシステム
   プロンプト、最後のuserが今回の入力、それより前が履歴。コンテキスト上限を超える分は古い履歴から削る
-- `stream`の有無両対応。ストリームではLM Studioのreasoningモデルの思考を`reasoning_content`として中継し、
+- `stream`の有無両対応。ストリームではローカルのreasoningモデルの思考を`reasoning_content`として中継し、
   思考中に本文を流さないモデル（Vertex経由のGemini等）のために15秒ごとにSSEのコメント行を送って接続を保つ
 - `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はMedium
 - 画像は今回の入力のみ、data URI（base64）のみ受け付ける（外部URLは取りに行かない）。Discordの添付と同じ
@@ -195,7 +197,7 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
 | `Program.cs` | エントリポイント。Discordイベント処理、モデル選択UI、エラーハンドリング |
 | `ChatOrchestrator.cs` | 会話処理の中核。履歴管理・添付処理・プロバイダー呼び出しの統括 |
 | `IAiProvider.cs` | AIプロバイダーの共通インターフェース |
-| `LmStudioProvider.cs` | LM Studio（OpenAI互換API）との通信・SSEパース |
+| `LmStudioProvider.cs` | ローカルLLM（llama-swap / LM Studio のOpenAI互換API）との通信・SSEパース |
 | `GoogleAiStudioProvider.cs` | Gemini API（Google AI Studio / APIキー認証）との通信。現在は割り当てモデル無し |
 | `GoogleAdcTokenProvider.cs` | ADC(Application Default Credentials)からVertex AI用アクセストークンを取得（ライブラリ側キャッシュ・自動リフレッシュに依存） |
 | `VertexGeminiProvider.cs` | Vertex AIネイティブエンドポイント経由のGemini通信。ロール交互制約等はGoogleAiStudioProviderと同一ロジック |
@@ -218,8 +220,8 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
 ## 注意事項
 
 - 本システムは個人利用を想定しています。`appsettings.json`（トークン・APIキーを含む）、`secrets/google-adc.json`（Vertex AI認証情報）は絶対にコミットしないでください。
-- LM Studioはモデルの事前ロードが不要です。未ロードのモデルIDへリクエストすると自動的にロードされ、別モデルへの切替時も自動でアンロード→ロードが行われます（実測: 軽量モデルで約9秒、最重量のQwen3.8-27Bで約20秒程度。既存のHTTPタイムアウト設定（10分）内に収まることを確認済み）。ただし切替直後の初回応答はこの分だけ遅延します。
-- LM Studioへの要求はプロセス全体で直列化されます（`LmStudioProvider`内の`SemaphoreSlim(1,1)`。Discordチャット・MCPの`ask`/`compare`のすべてが対象）。別モデルへの要求が重なった場合、後の要求は先の要求のストリームが完了（または中断）するまで待ってから開始され、1秒以上待ったときはログに`[LmStudio] 他のリクエストの完了を N 秒待ってから開始しました`と出ます。待ち行列の上限やタイムアウトは設けていないため、長い生成が続く間は後続の要求もその分遅れます。クラウドモデルへの要求は直列化の対象外です。
+- ローカルLLMはモデルの事前ロードが不要です。デスクトップPCのllama-swapが、未ロードのモデルIDへのリクエストで該当モデルのllama-serverを起動し、別モデルへの切替時は入れ替えます（1度に動くのは1モデル。冷えた状態からの読み込みは実測6〜17秒。既存のHTTPタイムアウト設定（10分）内に収まる）。ただし切替直後の初回応答はこの分だけ遅延します。
+- ローカルLLMへの要求はプロセス全体で直列化されます（`LmStudioProvider`内の`SemaphoreSlim(1,1)`。Discordチャット・MCPの`ask`/`compare`のすべてが対象）。別モデルへの要求が重なった場合、後の要求は先の要求のストリームが完了（または中断）するまで待ってから開始され、1秒以上待ったときはログに`[LmStudio] 他のリクエストの完了を N 秒待ってから開始しました`と出ます。待ち行列の上限やタイムアウトは設けていないため、長い生成が続く間は後続の要求もその分遅れます。クラウドモデルへの要求は直列化の対象外です。
 - `chat_history.db` には会話内容がそのまま保存されます。
 
 ## ライセンス
