@@ -15,6 +15,7 @@ namespace DiscordAIBot
     {
         private readonly HttpClient _httpClient;
         private readonly string _endpointUrl;
+        private readonly DesktopWaker _desktopWaker;
 
         // LM Studio serves one model at a time: a request for a different model while another
         // request is still streaming unloads the running model and truncates its output (observed
@@ -28,10 +29,11 @@ namespace DiscordAIBot
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        public LmStudioProvider(HttpClient httpClient, string endpointUrl)
+        public LmStudioProvider(HttpClient httpClient, string endpointUrl, DesktopWaker desktopWaker)
         {
             _httpClient = httpClient;
             _endpointUrl = endpointUrl;
+            _desktopWaker = desktopWaker;
         }
 
         public async IAsyncEnumerable<StreamChunk> StreamChatAsync(
@@ -100,6 +102,15 @@ namespace DiscordAIBot
                 ReasoningEffort: reasoningEffort,
                 ChatTemplateKwargs: chatTemplateKwargs
             );
+
+            // デスクトップPCが落ちていればWoLで起こして待つ(083)。Discordは事前に起動待ちを済ませて
+            // いるので、ここでは死活確認だけで通る。MCP・/v1はここで待つ
+            if (!await _desktopWaker.EnsureOnlineAsync(cancellationToken))
+            {
+                throw new HttpRequestException(_desktopWaker.Enabled
+                    ? $"デスクトップPCを起動できませんでした(Wake on LANを送って{_desktopWaker.WakeTimeout.TotalSeconds:F0}秒待っても応答なし)"
+                    : "デスクトップPCのAIエンジンがスリープ中、または未起動です");
+            }
 
             var waitStart = DateTime.UtcNow;
             await _lmStudioGate.WaitAsync(cancellationToken);

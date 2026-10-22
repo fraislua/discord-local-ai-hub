@@ -86,6 +86,9 @@ OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
    | `OpenAiApiKey` | OpenAI APIキー（GPT-6.1 Sol / GPT-6 Astra / GPT-5.6 Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
    | `McpListenUrl` | MCPサーバー(Kestrel)の待受URL。**Tailscale IPを明示的に指定すること**（例: `http://100.x.x.x:5100`）。`0.0.0.0`を指定するとLAN内からもアクセス可能になるため使用しないこと |
+   | `DesktopMacAddress` | （任意）デスクトップPCのMACアドレス（例: `9C:6B:00:7C:58:E0`）。設定するとローカルモデルの要求時にデスクトップPCが応答しなければWake on LANで起こして待つ。未設定なら起こさず失敗を返す |
+   | `DesktopWolBroadcast` | （任意）Wake on LANの送り先のブロードキャストアドレス（例: `192.168.0.255`。既定は`255.255.255.255`）。ミニPCとデスクトップPCが同じLANにいる必要がある |
+   | `DesktopWakeTimeoutSeconds` | （任意）Wake on LANを送ってから応答を待つ最大秒数（既定180） |
    | `WebUiApiKey` | （任意）OpenAI互換窓口（`/v1`）のAPIキー。Open WebUI等のクライアントに`Authorization: Bearer`で送らせる。未設定なら`/v1`は無効 |
 
 3. トークン数カウント用に、使用モデル（Gemma 4）の `tokenizer.json` を実行ファイルと同じディレクトリに配置します（Hugging Faceのモデルページから入手できます。未配置の場合は文字数ベースの概算モードで動作します）。
@@ -199,6 +202,7 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
 | `ChatOrchestrator.cs` | 会話処理の中核。履歴管理・添付処理・プロバイダー呼び出しの統括 |
 | `IAiProvider.cs` | AIプロバイダーの共通インターフェース |
 | `LmStudioProvider.cs` | ローカルLLM（llama-swap / LM Studio のOpenAI互換API）との通信・SSEパース |
+| `DesktopWaker.cs` | デスクトップPCの死活確認とWake on LANによる自動起動 |
 | `GoogleAiStudioProvider.cs` | Gemini API（Google AI Studio / APIキー認証）との通信。現在は割り当てモデル無し |
 | `GoogleAdcTokenProvider.cs` | ADC(Application Default Credentials)からVertex AI用アクセストークンを取得（ライブラリ側キャッシュ・自動リフレッシュに依存） |
 | `VertexGeminiProvider.cs` | Vertex AIネイティブエンドポイント経由のGemini通信。ロール交互制約等はGoogleAiStudioProviderと同一ロジック |
@@ -222,6 +226,7 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
 
 - 本システムは個人利用を想定しています。`appsettings.json`（トークン・APIキーを含む）、`secrets/google-adc.json`（Vertex AI認証情報）は絶対にコミットしないでください。
 - ローカルLLMはモデルの事前ロードが不要です。デスクトップPCのllama-swapが、未ロードのモデルIDへのリクエストで該当モデルのllama-serverを起動し、別モデルへの切替時は入れ替えます（1度に動くのは1モデル。冷えた状態からの読み込みは実測6〜17秒。既存のHTTPタイムアウト設定（10分）内に収まる）。ただし切替直後の初回応答はこの分だけ遅延します。
+- デスクトップPCが落ちているとき（`DesktopMacAddress`設定時）は、ローカルLLMへの要求でWake on LANを送り、llama-swapの`/v1/models`が応答するまで待ってから処理します（`DesktopWaker.cs`。Discord・MCP・`/v1`のすべてが対象。待っている間も30秒ごとに送り直し、同時に来た要求は同じ起動を待つ）。Discordでは「デスクトップPCを起動しています」と表示し、起動後に生成を始めます。
 - ローカルLLMへの要求はプロセス全体で直列化されます（`LmStudioProvider`内の`SemaphoreSlim(1,1)`。Discordチャット・MCPの`ask`/`compare`のすべてが対象）。別モデルへの要求が重なった場合、後の要求は先の要求のストリームが完了（または中断）するまで待ってから開始され、1秒以上待ったときはログに`[LmStudio] 他のリクエストの完了を N 秒待ってから開始しました`と出ます。待ち行列の上限やタイムアウトは設けていないため、長い生成が続く間は後続の要求もその分遅れます。クラウドモデルへの要求は直列化の対象外です。
 - `chat_history.db` には会話内容がそのまま保存されます。
 

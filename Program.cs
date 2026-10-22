@@ -29,6 +29,7 @@ namespace DiscordAIBot
         private ChatOrchestrator _orchestrator = null!;
         private string _discordToken = string.Empty;
         private string _lmStudioEndpoint = string.Empty;
+        private DesktopWaker _desktopWaker = null!;
         private string _geminiApiKey = string.Empty;
         private string _googleAdcCredentialPath = string.Empty;
         private string _vertexProjectId = string.Empty;
@@ -87,6 +88,13 @@ namespace DiscordAIBot
                 _openAiApiKey = config["BotSettings:OpenAiApiKey"] ?? throw new Exception("OpenAiApiKeyが設定されていません。");
                 _mcpListenUrl = config["BotSettings:McpListenUrl"] ?? throw new Exception("McpListenUrlが設定されていません。");
                 _webUiApiKey = config["BotSettings:WebUiApiKey"] ?? string.Empty;
+                // デスクトップPCのWoL(083)。MACアドレス未設定なら自動起動しない
+                _desktopWaker = new DesktopWaker(
+                    _httpClient,
+                    _lmStudioEndpoint,
+                    config["BotSettings:DesktopMacAddress"],
+                    config["BotSettings:DesktopWolBroadcast"],
+                    int.TryParse(config["BotSettings:DesktopWakeTimeoutSeconds"], out var wakeTimeoutSeconds) ? wakeTimeoutSeconds : 180);
 
                 if (!ulong.TryParse(config["BotSettings:ChatAiChannelId"], out _chatAiChannelId))
                 {
@@ -152,7 +160,7 @@ namespace DiscordAIBot
             _client.ThreadDeleted += ThreadDeletedAsync;
 
             // プロバイダーのインスタンス化と動的ルーティング用のFactory登録
-            IAiProvider lmStudioProvider = new LmStudioProvider(_httpClient, _lmStudioEndpoint);
+            IAiProvider lmStudioProvider = new LmStudioProvider(_httpClient, _lmStudioEndpoint, _desktopWaker);
             IAiProvider googleAiProvider = new GoogleAiStudioProvider(_httpClient, _geminiApiKey);
 
             var googleAdcTokenProvider = new GoogleAdcTokenProvider(_googleAdcCredentialPath);
@@ -608,18 +616,6 @@ namespace DiscordAIBot
             }
         }
 
-        private async Task<bool> CheckLmStudioOnlineAsync()
-        {
-            try
-            {
-                string healthCheckUrl = _lmStudioEndpoint.Replace("/chat/completions", "/models");
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                var response = await _httpClient.GetAsync(healthCheckUrl, cts.Token);
-                return response.IsSuccessStatusCode;
-            }
-            catch { return false; }
-        }
-
         private async Task MessageReceivedAsync(SocketMessage arg)
         {
             if (arg is not SocketUserMessage userMessage || userMessage.Author.IsBot) return;
@@ -699,10 +695,13 @@ namespace DiscordAIBot
                 : SystemPromptRegistry.DefaultPromptId;
             string systemPrompt = SystemPromptRegistry.AvailablePrompts[promptId].Prompt;
 
+            // デスクトップPCが落ちていればWoLで起こす(083)。起動待ち(最大数分)でゲートウェイの
+            // イベント処理を止めないよう、待つのは下の生成処理と同じバックグラウンドのタスクの中
+            bool needsWake = false;
             if (targetModel.Provider == ApiProvider.LmStudio)
             {
-                bool isOnline = await CheckLmStudioOnlineAsync();
-                if (!isOnline)
+                needsWake = !await _desktopWaker.IsOnlineAsync();
+                if (needsWake && !_desktopWaker.Enabled)
                 {
                     await targetThread.SendMessageAsync("❌ **[通信失敗]** デスクトップPCのAIエンジンがスリープ中、または未起動です。\n💡 `/model` コマンドを使用して、別のモデルに切り替えてください。");
                     return;
@@ -732,12 +731,26 @@ namespace DiscordAIBot
             var builder = new ComponentBuilder()
                 .WithButton("🛑 生成を停止", $"stop_{contextId}", ButtonStyle.Danger);
 
-            var statusMsg = await targetThread.SendMessageAsync("🔍 [1/3] ファイルを解析中...", components: builder.Build());
+            var statusMsg = await targetThread.SendMessageAsync(
+                needsWake
+                    ? $"💤 デスクトップPCが起動していないため、Wake on LANで起動しています…(最大{_desktopWaker.WakeTimeout.TotalSeconds:F0}秒)"
+                    : "🔍 [1/3] ファイルを解析中...",
+                components: builder.Build());
 
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    if (needsWake)
+                    {
+                        var wakeStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                        if (!await _desktopWaker.EnsureOnlineAsync(cts.Token))
+                        {
+                            throw new HttpRequestException($"Wake on LANを送って{_desktopWaker.WakeTimeout.TotalSeconds:F0}秒待ってもデスクトップPCが応答しませんでした");
+                        }
+                        await statusMsg.ModifyAsync(m => m.Content = $"☀️ デスクトップPCが起動しました({wakeStopwatch.Elapsed.TotalSeconds:F0}秒)\n🔍 [1/3] ファイルを解析中...");
+                    }
+
                     await _orchestrator.ProcessUserMessageAsync(
                         userMessage,
                         statusMsg,
