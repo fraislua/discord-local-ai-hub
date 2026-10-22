@@ -29,22 +29,40 @@ namespace DiscordAIBot
     //   日次無料枠の管理はOpenAiQuotaによる自前集計(事前ブロック)のみに依拠する
     // - SSEの構造(finish_reasonチャンクとusageチャンクが別々に届く)はVertex Grokと同じ
     //   ため、そのマージ処理をそのまま流用している
+    // ゲートウェイ(Bifrost、ops-repo 085)を設定した場合は、OpenAIへ直接ではなくゲートウェイへ送る。
+    // 無料枠の日次上限はBifrostがOpenCode等の他の利用と合算して守る(OpenAiQuotaの事前ブロックはそのまま残す)。
+    // Bifrostのモデル名は「接続先/モデル」なので、ModelIdを設定の対応表(なければ "openai/")で変換する
     public class OpenAiProvider : IAiProvider
     {
-        private const string EndpointUrl = "https://api.openai.com/v1/chat/completions";
+        private const string DirectEndpointUrl = "https://api.openai.com/v1/chat/completions";
+        private const string DefaultGatewayModelPrefix = "openai/";
 
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
+        private readonly string _endpointUrl;
+        private readonly bool _useGateway;
+        private readonly IReadOnlyDictionary<string, string> _gatewayModelNames;
 
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        public OpenAiProvider(HttpClient httpClient, string apiKey)
+        // gatewayEndpointが空ならOpenAIへ直接(apiKeyはOpenAIのキー)。
+        // 設定されていればゲートウェイへ送り、apiKeyにはゲートウェイの仮想キーを渡す
+        public OpenAiProvider(HttpClient httpClient, string apiKey, string? gatewayEndpoint = null, IReadOnlyDictionary<string, string>? gatewayModelNames = null)
         {
             _httpClient = httpClient;
             _apiKey = apiKey;
+            _useGateway = !string.IsNullOrWhiteSpace(gatewayEndpoint);
+            _endpointUrl = _useGateway ? gatewayEndpoint! : DirectEndpointUrl;
+            _gatewayModelNames = gatewayModelNames ?? new Dictionary<string, string>();
+        }
+
+        private string ToRequestModelName(string modelId)
+        {
+            if (!_useGateway) return modelId;
+            return _gatewayModelNames.TryGetValue(modelId, out var mapped) ? mapped : DefaultGatewayModelPrefix + modelId;
         }
 
         public async IAsyncEnumerable<StreamChunk> StreamChatAsync(
@@ -98,7 +116,7 @@ namespace DiscordAIBot
             // gpt-5.6系はtemperatureのデフォルト値(1)以外を受け付けない(実機で400確認済み)
             // ため、Vertex Gemini/Grokと異なりtemperatureパラメータ自体を送らない
             var requestBodyObj = new OpenAiRequestDto(
-                Model: request.ModelId,
+                Model: ToRequestModelName(request.ModelId),
                 Messages: messages,
                 MaxCompletionTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : 8192,
                 Stream: true,
@@ -108,7 +126,7 @@ namespace DiscordAIBot
 
             string requestJson = JsonSerializer.Serialize(requestBodyObj, _jsonOptions);
             using var httpContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, EndpointUrl) { Content = httpContent };
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpointUrl) { Content = httpContent };
             httpRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiKey);
 
             HttpResponseMessage response;
@@ -124,7 +142,10 @@ namespace DiscordAIBot
 
                     if (response.StatusCode == HttpStatusCode.TooManyRequests)
                     {
-                        throw new AiRateLimitException(response.StatusCode, "OpenAI APIのレートリミットに到達しました。");
+                        // ゲートウェイの429は、無料枠を守るための日次上限(UTC 0時に戻る)に達したことを表す
+                        throw new AiRateLimitException(response.StatusCode, _useGateway
+                            ? "OpenAIの日次上限(無料枠の保護、ゲートウェイ側)に達しました。UTC 0時(日本時間9時)に戻ります。"
+                            : "OpenAI APIのレートリミットに到達しました。");
                     }
                 }
 
@@ -231,11 +252,19 @@ namespace DiscordAIBot
 
                     if (finishReason != null)
                     {
-                        pendingFinishReason = finishReason;
                         if (!string.IsNullOrEmpty(textDelta))
                         {
                             yield return new StreamChunk(textDelta, false, null);
                         }
+                        // ゲートウェイ(Bifrost)はusageをfinish_reasonと同じチャンクに入れて返す(085で確認)。
+                        // その場合は保留せず、このチャンクのusageで終える
+                        if (promptTokens.HasValue || completionTokens.HasValue || reasoningTokens.HasValue)
+                        {
+                            yield return new StreamChunk(null, false, finishReason, promptTokens, completionTokens, reasoningTokens);
+                            pendingFinishReason = null;
+                            continue;
+                        }
+                        pendingFinishReason = finishReason;
                         continue;
                     }
 

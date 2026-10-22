@@ -35,6 +35,10 @@ namespace DiscordAIBot
         private string _vertexProjectId = string.Empty;
         private string _vertexRegion = string.Empty;
         private string _openAiApiKey = string.Empty;
+        // OpenAIをゲートウェイ(Bifrost)経由にする設定(085)。Endpointが空ならOpenAIへ直接
+        private string _openAiGatewayEndpoint = string.Empty;
+        private string _openAiGatewayKey = string.Empty;
+        private Dictionary<string, string> _openAiGatewayModels = new();
         private string _mcpListenUrl = string.Empty;
         // OpenAI互換窓口(/v1、Open WebUI用)のAPIキー。未設定なら/v1を公開しない(076)
         private string _webUiApiKey = string.Empty;
@@ -86,6 +90,16 @@ namespace DiscordAIBot
                 _vertexProjectId = config["BotSettings:VertexProjectId"] ?? throw new Exception("VertexProjectIdが設定されていません。");
                 _vertexRegion = config["BotSettings:VertexRegion"] ?? throw new Exception("VertexRegionが設定されていません。");
                 _openAiApiKey = config["BotSettings:OpenAiApiKey"] ?? throw new Exception("OpenAiApiKeyが設定されていません。");
+                _openAiGatewayEndpoint = config["BotSettings:OpenAiGatewayEndpoint"] ?? string.Empty;
+                _openAiGatewayKey = config["BotSettings:OpenAiGatewayKey"] ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(_openAiGatewayEndpoint) && string.IsNullOrWhiteSpace(_openAiGatewayKey))
+                {
+                    throw new Exception("OpenAiGatewayEndpointを設定した場合はOpenAiGatewayKeyも必要です。");
+                }
+                foreach (var entry in config.GetSection("BotSettings:OpenAiGatewayModels").GetChildren())
+                {
+                    if (!string.IsNullOrWhiteSpace(entry.Value)) _openAiGatewayModels[entry.Key] = entry.Value;
+                }
                 _mcpListenUrl = config["BotSettings:McpListenUrl"] ?? throw new Exception("McpListenUrlが設定されていません。");
                 _webUiApiKey = config["BotSettings:WebUiApiKey"] ?? string.Empty;
                 // デスクトップPCのWoL(083)。MACアドレス未設定なら自動起動しない
@@ -166,7 +180,13 @@ namespace DiscordAIBot
             var googleAdcTokenProvider = new GoogleAdcTokenProvider(_googleAdcCredentialPath);
             IAiProvider vertexGeminiProvider = new VertexGeminiProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
             IAiProvider vertexGrokProvider = new VertexGrokProvider(_httpClient, googleAdcTokenProvider, _vertexProjectId, _vertexRegion);
-            IAiProvider openAiProvider = new OpenAiProvider(_httpClient, _openAiApiKey);
+            IAiProvider openAiProvider = string.IsNullOrWhiteSpace(_openAiGatewayEndpoint)
+                ? new OpenAiProvider(_httpClient, _openAiApiKey)
+                : new OpenAiProvider(_httpClient, _openAiGatewayKey, _openAiGatewayEndpoint, _openAiGatewayModels);
+            if (!string.IsNullOrWhiteSpace(_openAiGatewayEndpoint))
+            {
+                Console.WriteLine($"[Info] OpenAIはゲートウェイ経由で送ります: {_openAiGatewayEndpoint}");
+            }
 
             Func<ApiProvider, IAiProvider> providerFactory = providerType => providerType switch
             {

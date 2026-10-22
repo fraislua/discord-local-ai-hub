@@ -85,6 +85,9 @@ OpenAI系はOpenAIのデータ共有プログラム(無料枠)を前提とした
    | `VertexProjectId` | Vertex AIを呼び出すGoogle CloudプロジェクトID |
    | `VertexRegion` | Vertex AIのリージョン（例: `global`） |
    | `OpenAiApiKey` | OpenAI APIキー（GPT-6.1 Sol / GPT-6 Astra / GPT-5.6 Luna用。データ共有プログラムを有効化した状態での利用を前提とする） |
+   | `OpenAiGatewayEndpoint` | （任意）OpenAIをゲートウェイ（Bifrost）経由にする場合の送り先（例: `http://127.0.0.1:8070/v1/chat/completions`）。空ならOpenAIへ直接送る。ゲートウェイ側で他の利用と合算した日次無料枠の上限を守る |
+   | `OpenAiGatewayKey` | （`OpenAiGatewayEndpoint`を設定した場合は必須）ゲートウェイの仮想キー。このとき`OpenAiApiKey`は使われない |
+   | `OpenAiGatewayModels` | （任意）モデルIDからゲートウェイのモデル名への対応表。無いモデルは`openai/<モデルID>`として送る |
    | `McpListenUrl` | MCPサーバー(Kestrel)の待受URL。**Tailscale IPを明示的に指定すること**（例: `http://100.x.x.x:5100`）。`0.0.0.0`を指定するとLAN内からもアクセス可能になるため使用しないこと |
    | `DesktopMacAddress` | （任意）デスクトップPCのMACアドレス（例: `9C:6B:00:7C:58:E0`）。設定するとローカルモデルの要求時にデスクトップPCが応答しなければWake on LANで起こして待つ。未設定なら起こさず失敗を返す |
    | `DesktopWolBroadcast` | （任意）Wake on LANの送り先のブロードキャストアドレス（例: `192.168.0.255`。既定は`255.255.255.255`）。ミニPCとデスクトップPCが同じLANにいる必要がある |
