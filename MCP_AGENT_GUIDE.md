@@ -39,7 +39,7 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 | `prompt` | ○ | モデルへの質問・依頼内容(テキスト) |
 | `model` | - | 使用するモデルID。省略(`null`)時はローカルの既定モデルを使用 |
 | `session_id` | - | 短期履歴を紐付ける任意の文字列。省略時は履歴なし(単発リクエスト) |
-| `effort` | - | 思考の深さ。`None`/`Low`/`Medium`/`High`/`XHigh`のいずれか。省略時は`Medium`(Qwen3.8の2モデルは`Low`。各モデルの既定は`models://registry`の`defaultEffort`)。ローカルモデルで段階を変えられるのはQwen3.8の2モデル(`qwen/qwen3.8-27b`・`qwen3.8-27b-32k`)だけで、`None`(思考なし)/`Low`/`Medium`/`XHigh`。他のローカルモデルでは無視される。モデルが非対応の段階を指定しても自動調整される。不正な値は明確なエラーになる |
+| `effort` | - | 思考の深さ。`None`/`Low`/`Medium`/`High`/`XHigh`のいずれか。省略時は`Medium`(Qwen3.8の2モデルとBonsaiは`Low`。各モデルの既定は`models://registry`の`defaultEffort`)。ローカルモデルで段階を変えられるのはQwen3.8系の3モデル(`ternary-bonsai-2-27b`・`qwen/qwen3.8-27b`・`qwen3.8-27b-56k`)だけで、`None`(思考なし)/`Low`/`Medium`/`XHigh`。他のローカルモデルでは無視される。モデルが非対応の段階を指定しても自動調整される。不正な値は明確なエラーになる |
 | `temperature` | - | 生成のランダム性(目安0.0〜2.0)。省略時はクラウドモデルは0.7、ローカルモデルはモデルごとの公式推奨値(デスクトップのllama-swap側で設定。Qwen3.8・Gemma 4は1.0、Ornithは0.6など)。**OpenAIモデル(`gpt-6.1-sol`/`gpt-6-astra`/`gpt-5.6-luna`)ではAPI仕様上デフォルト値以外を受け付けないため無視される**(エラーにはならない) |
 
 省略可能な引数(`-`のもの)は、引数ごと省略できます(JSONの`null`を渡しても同じ)。文字列の
@@ -85,11 +85,12 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 
 | model ID | 実行先 | コスト | 備考 |
 |---|---|---|---|
-| (省略/`null`) → `google/gemma-4-12b-qat` | ローカル | **無料** | デフォルトモデル・日常会話用・約70tok/sec |
+| (省略/`null`) → `ternary-bonsai-2-27b` | ローカル | **無料** | デフォルトモデル・長文用(160K)・約66tok/sec(文脈を埋めると約42)。Qwen3.8-27Bの3値版で賢さはほぼ同等。長く考え込みやすい。13万トークン読ませると最初の応答まで約3分 |
+| `google/gemma-4-12b-qat` | ローカル | 無料 | 日常会話用・約70tok/sec |
 | `gemma-4-e4b-uncensored-hauhaucs-aggressive` | ローカル | 無料 | フィルタ緩和モデル・日常会話用・約130tok/sec |
 | `qwen/qwen3.8-27b` | ローカル | 無料 | 難問推論・複雑な設計用・約65tok/sec。文脈は8K |
-| `qwen3.8-27b-32k` | ローカル | 無料 | 上と同じモデルの長文版(32K)・約45tok/sec |
-| `qwen3.6-35b-a3b` | ローカル | 無料 | MoE型・長文脈(64K)・約60tok/sec。賢さは27Bより下 |
+| `qwen3.8-27b-56k` | ローカル | 無料 | 上と同じモデルの長文版(56K)・約43tok/sec |
+| `ornith-1.5-35b-a3b` | ローカル | 無料 | MoE型・速さ用(64K)・約66tok/sec。思考が短い |
 | `ornith-1.5-9b` | ローカル | 無料 | コーディング特化モデル・約100tok/sec |
 | `gemini-3.8-flash` | Vertex AI | 課金対象(共有月$10枠) | 高速・長文脈(100万トークン超) |
 | `gemini-4-argon` | Vertex AI | 課金対象(共有月$10枠) | Google最上位。単価は3.8 Flashの約2.7倍 |
@@ -149,7 +150,7 @@ claude mcp add --transport http discord-ai-hub http://100.96.65.109:5100/mcp
 |---|---|---|
 | `prompt` | ○ | 全モデル共通の質問・依頼内容 |
 | `models` | ○ | 比較したいモデルIDの配列(1個以上)。`model`引数と同じ値の集合。**空配列は不可** |
-| `effort` | - | 思考の深さ。全モデル共通で適用(省略時は各モデルの既定。Qwen3.8はLow、他はMedium)。非対応の段階は自動調整される |
+| `effort` | - | 思考の深さ。全モデル共通で適用(省略時は各モデルの既定。Qwen3.8・BonsaiはLow、他はMedium)。非対応の段階は自動調整される |
 | `temperature` | - | 生成のランダム性。全モデル共通で適用(省略時はクラウドモデルは0.7、ローカルモデルはモデルごとの推奨値)。OpenAIモデルでは無視される |
 
 省略可能な引数の扱い・引数エラーの内容は`ask`と同じです。

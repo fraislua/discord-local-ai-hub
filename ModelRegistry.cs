@@ -34,10 +34,30 @@ namespace DiscordAIBot
         // セキュリティ対策として、デフォルトは課金の発生しないローカルモデルとする。
         // クラウドモデルは/modelコマンドで都度明示的に選択する運用（アカウント乗っ取り等の
         // リスクを踏まえ、既定で高コストなクラウドモデルが有効にならないようにする）
-        public const string DefaultModelId = "google/gemma-4-12b-qat";
+        // 2026-10-22にGemma-4-12BからTernary Bonsai 2 27Bに変更(ユーザー指定)
+        public const string DefaultModelId = "ternary-bonsai-2-27b";
 
         public static readonly Dictionary<string, ModelMetadata> AvailableModels = new()
         {
+            {
+                // Qwen3.8-27BをPrismMLが3値の重みに作り直したもの(PQ2_0、7.21GB)。全部GPUに載り160K(082)。
+                // 長く考え込みやすい(モデルカードの既知の不具合)ためMaxOutputTokensは無制限のまま。
+                // ツール呼び出しの出力が崩れることがあるが、ハブはローカルにtoolsを送らないので影響なし
+                "ternary-bonsai-2-27b",
+                new ModelMetadata
+                {
+                    DisplayName = "Ternary-Bonsai-2-27B",
+                    ModelId = "ternary-bonsai-2-27b",
+                    ContextWindow = 163840,
+                    MaxOutputTokens = -1,
+                    Description = "デフォルトモデル-長文用(160K)-約66tok/sec (画像対応 / ローカル推論)",
+                    IsVlm = true,
+                    Provider = ApiProvider.LmStudio,
+                    // テンプレートはQwen3.8と同じ(low/medium/xhigh)。llama-swap側の既定もlow
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.XHigh },
+                    DefaultEffort = EffortLevel.Low
+                }
+            },
             {
                 "google/gemma-4-12b-qat",
                 new ModelMetadata
@@ -46,7 +66,7 @@ namespace DiscordAIBot
                     ModelId = "google/gemma-4-12b-qat",
                     ContextWindow = 32768,
                     MaxOutputTokens = -1,
-                    Description = "デフォルトモデル-日常会話用-約70tok/sec (画像対応 / ローカル推論)",
+                    Description = "日常会話用-約70tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }
@@ -84,15 +104,16 @@ namespace DiscordAIBot
             },
             {
                 // qwen/qwen3.8-27bと同じGGUFをMTP投機的デコードなしで起動する長文版(082)。
-                // MTPありは12GBのVRAMに8Kまでしか載らないため、文脈長が要るときはこちら
-                "qwen3.8-27b-32k",
+                // MTPありは12GBのVRAMに8Kまでしか載らないため、文脈長が要るときはこちら。
+                // KVをq4_0にして32K→56Kに伸ばし、IDもqwen3.8-27b-32kから変更(2026-10-22)
+                "qwen3.8-27b-56k",
                 new ModelMetadata
                 {
-                    DisplayName = "Qwen3.8-27B-32K",
-                    ModelId = "qwen3.8-27b-32k",
-                    ContextWindow = 32768,
+                    DisplayName = "Qwen3.8-27B-56K",
+                    ModelId = "qwen3.8-27b-56k",
+                    ContextWindow = 57344,
                     MaxOutputTokens = -1,
-                    Description = "難問推論・長文用(32K)-約45tok/sec (画像対応 / ローカル推論)",
+                    Description = "難問推論・長文用(56K)-約43tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio,
                     // qwen/qwen3.8-27bと同じ
@@ -101,14 +122,16 @@ namespace DiscordAIBot
                 }
             },
             {
-                "qwen3.6-35b-a3b",
+                // Qwen3.6-35B-A3Bから入れ替え(2026-10-22)。同じ設定で速さ・回答試験・思考の短さの全部で上だった。
+                // テンプレートは思考のオン・オフだけ(段階なし)。過去の思考も履歴に残すので長い会話では文脈を多めに使う
+                "ornith-1.5-35b-a3b",
                 new ModelMetadata
                 {
-                    DisplayName = "Qwen3.6-35B-A3B",
-                    ModelId = "qwen3.6-35b-a3b",
+                    DisplayName = "Ornith-1.5-35B-A3B",
+                    ModelId = "ornith-1.5-35b-a3b",
                     ContextWindow = 65536,
                     MaxOutputTokens = -1,
-                    Description = "MoE型-長文脈(64K)-約60tok/sec (画像対応 / ローカル推論)",
+                    Description = "MoE型-速さ用(64K)-約66tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
                     Provider = ApiProvider.LmStudio
                 }

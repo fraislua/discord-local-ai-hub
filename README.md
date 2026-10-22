@@ -24,15 +24,16 @@ Discordをフロントエンドとして、自宅のローカルLLM（llama.cpp 
 
 ## 対応モデル
 
-`/model` コマンドで以下10モデルを切り替えられます（`ModelRegistry.cs`で定義）。
+`/model` コマンドで以下13モデルを切り替えられます（`ModelRegistry.cs`で定義）。
 
 | モデル | 実行先 | 画像対応 |
 |---|---|---|
+| Ternary-Bonsai-2-27B (`ternary-bonsai-2-27b`)、既定 | ローカル (llama.cpp、PrismML版) | ○ |
 | Gemma-4-12B-VLM (`google/gemma-4-12b-qat`) | ローカル (llama.cpp) | ○ |
 | Gemma-4-E4B-Uncensored (`gemma-4-e4b-uncensored-hauhaucs-aggressive`) | ローカル (llama.cpp) | ○ |
 | Qwen3.8-27B (`qwen/qwen3.8-27b`) | ローカル (llama.cpp) | ○ |
-| Qwen3.8-27B-32K (`qwen3.8-27b-32k`) | ローカル (llama.cpp) | ○ |
-| Qwen3.6-35B-A3B (`qwen3.6-35b-a3b`) | ローカル (llama.cpp) | ○ |
+| Qwen3.8-27B-56K (`qwen3.8-27b-56k`) | ローカル (llama.cpp) | ○ |
+| Ornith-1.5-35B-A3B (`ornith-1.5-35b-a3b`) | ローカル (llama.cpp) | ○ |
 | Ornith-1.5-9B (`ornith-1.5-9b`) | ローカル (llama.cpp) | ○ |
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Vertex AI | ○ |
 | Gemini 4 Argon (`gemini-4-argon`) | Vertex AI | ○ |
@@ -185,7 +186,7 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
   プロンプト、最後のuserが今回の入力、それより前が履歴。コンテキスト上限を超える分は古い履歴から削る
 - `stream`の有無両対応。ストリームではローカルのreasoningモデルの思考を`reasoning_content`として中継し、
   思考中に本文を流さないモデル（Vertex経由のGemini等）のために15秒ごとにSSEのコメント行を送って接続を保つ
-- `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はモデルごとの既定(Medium。Qwen3.8はLow)。`temperature`未指定はクラウド0.7、ローカルはllama-swap側の推奨値
+- `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はモデルごとの既定(Medium。Qwen3.8・BonsaiはLow)。`temperature`未指定はクラウド0.7、ローカルはllama-swap側の推奨値
 - 画像は今回の入力のみ、data URI（base64）のみ受け付ける（外部URLは取りに行かない）。Discordの添付と同じ
   サイズ・解像度制限と長辺1024pxへの縮小を通す。履歴中の画像は`[画像]`という文字に置き換える
 - 出力上限で切れた等の場合はMCPの`ask`と同じ注記を本文末尾に付ける。ツール呼び出し（function calling）は非対応
