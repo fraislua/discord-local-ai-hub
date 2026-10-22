@@ -75,7 +75,7 @@ namespace DiscordAIBot
             IProgress<ProgressNotificationValue> progress,
             CancellationToken cancellationToken,
             [Description("思考の深さ。省略時はMedium。全モデル共通で適用され、モデルが非対応の場合は自動調整される")] string? effort = null,
-            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルでは無視される")] double? temperature = null)
+            [Description("生成のランダム性(0.0〜2.0程度)。省略時はクラウドモデルは0.7、ローカルモデルはモデルごとの推奨値。OpenAIモデルでは無視される")] double? temperature = null)
         {
             effort = McpArguments.NormalizeOptional(effort);
 
@@ -84,14 +84,18 @@ namespace DiscordAIBot
                 throw new McpException("modelsには1個以上のモデルIDを指定してください。");
             }
 
-            EffortLevel effortLevel = EffortLevel.Medium;
-            if (!string.IsNullOrWhiteSpace(effort) && !Enum.TryParse(effort, ignoreCase: true, out effortLevel))
+            // 未指定(null)ならモデルごとの既定(ModelRegistry.DefaultEffortFor)を使う
+            EffortLevel? effortLevel = null;
+            if (!string.IsNullOrWhiteSpace(effort))
             {
-                string validEfforts = string.Join(", ", Enum.GetNames(typeof(EffortLevel)));
-                throw new McpException($"未知のeffortです: '{effort}'。有効な値: {validEfforts}");
+                if (!Enum.TryParse(effort, ignoreCase: true, out EffortLevel parsed))
+                {
+                    string validEfforts = string.Join(", ", Enum.GetNames(typeof(EffortLevel)));
+                    throw new McpException($"未知のeffortです: '{effort}'。有効な値: {validEfforts}");
+                }
+                effortLevel = parsed;
             }
 
-            double resolvedTemperature = temperature ?? 0.7;
             string callerIp = _httpContextAccessor.HttpContext?.Connection?.RemoteIpAddress?.ToString() ?? "unknown";
 
             _logger.LogInformation(
@@ -122,7 +126,7 @@ namespace DiscordAIBot
                     Message = $"{modelId} 応答生成中...({position}、経過{elapsed.TotalSeconds:F0}秒、{receivedChars}文字受信済み)"
                 });
 
-                results.Add(await CallSingleModelAsync(modelId, prompt, effortLevel, resolvedTemperature, reportModelProgress, cancellationToken));
+                results.Add(await CallSingleModelAsync(modelId, prompt, effortLevel, temperature, reportModelProgress, cancellationToken));
             }
 
             progress.Report(new ProgressNotificationValue { Progress = (float)compareStopwatch.Elapsed.TotalSeconds, Message = "全モデル完了" });
@@ -135,7 +139,7 @@ namespace DiscordAIBot
         }
 
         private async Task<ModelComparisonResult> CallSingleModelAsync(
-            string modelId, string prompt, EffortLevel effortLevel, double temperature,
+            string modelId, string prompt, EffortLevel? effortLevel, double? temperature,
             Action<TimeSpan, int> reportProgress, CancellationToken cancellationToken)
         {
             var stopwatch = Stopwatch.StartNew();
@@ -178,7 +182,7 @@ namespace DiscordAIBot
                     CurrentImagesBase64: Array.Empty<string>(),
                     Temperature: temperature,
                     MaxOutputTokens: modelMeta.MaxOutputTokens,
-                    Effort: effortLevel
+                    Effort: effortLevel ?? ModelRegistry.DefaultEffortFor(modelMeta.ModelId)
                 );
 
                 // ストリーム受信・終了理由の収集・進捗通知・コスト記録はaskと共通(McpModelCall)

@@ -25,6 +25,8 @@ namespace DiscordAIBot
         // /effortコマンドで選択可能なエフォート段階(実機検証済みの値のみ)。
         // 未指定(null)の場合はProgram.cs側でLow/Medium/Highの3段階にフォールバックする
         public IReadOnlyList<EffortLevel>? SupportedEfforts { get; init; }
+        // effort未指定時の段階。未指定(null)ならMedium(DefaultEffortFor参照)
+        public EffortLevel? DefaultEffort { get; init; }
     }
 
     public static class ModelRegistry
@@ -72,7 +74,12 @@ namespace DiscordAIBot
                     MaxOutputTokens = -1,
                     Description = "難問推論・複雑な設計用-約65tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
-                    Provider = ApiProvider.LmStudio
+                    Provider = ApiProvider.LmStudio,
+                    // llama-swap側のテンプレートが受ける段階(low/medium/xhigh)と、思考を止めるNone
+                    // (enable_thinking:false)。既定はllama-swap側と同じLow(8Kの文脈を思考で使い切らない
+                    // ため。LM Studio時代と同じ)(082)
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.XHigh },
+                    DefaultEffort = EffortLevel.Low
                 }
             },
             {
@@ -87,7 +94,10 @@ namespace DiscordAIBot
                     MaxOutputTokens = -1,
                     Description = "難問推論・長文用(32K)-約45tok/sec (画像対応 / ローカル推論)",
                     IsVlm = true,
-                    Provider = ApiProvider.LmStudio
+                    Provider = ApiProvider.LmStudio,
+                    // qwen/qwen3.8-27bと同じ
+                    SupportedEfforts = new[] { EffortLevel.None, EffortLevel.Low, EffortLevel.Medium, EffortLevel.XHigh },
+                    DefaultEffort = EffortLevel.Low
                 }
             },
             {
@@ -238,5 +248,11 @@ namespace DiscordAIBot
                 .ThenBy(level => (int)level)
                 .First();
         }
+
+        // effort未指定時の段階。モデルにDefaultEffortがあればそれ、無ければ従来どおりMedium
+        public static EffortLevel DefaultEffortFor(string modelId) =>
+            AvailableModels.TryGetValue(modelId, out var meta) && meta.DefaultEffort is { } level
+                ? level
+                : EffortLevel.Medium;
     }
 }

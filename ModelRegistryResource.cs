@@ -27,6 +27,8 @@ namespace DiscordAIBot
             [JsonPropertyName("maxOutputTokens")] public int MaxOutputTokens { get; init; }
             [JsonPropertyName("supportsImages")] public bool SupportsImages { get; init; }
             [JsonPropertyName("supportedEfforts")] public IReadOnlyList<string>? SupportedEfforts { get; init; }
+            // effort省略時に使う段階(段階を選べないモデルはnull)
+            [JsonPropertyName("defaultEffort")] public string? DefaultEffort { get; init; }
             [JsonPropertyName("costTier")] public string CostTier { get; init; } = "";
             [JsonPropertyName("dataSharingProgram")] public bool DataSharingProgram { get; init; }
             [JsonPropertyName("usageNote")] public string UsageNote { get; init; } = "";
@@ -56,6 +58,7 @@ namespace DiscordAIBot
                     MaxOutputTokens = meta.MaxOutputTokens,
                     SupportsImages = meta.IsVlm,
                     SupportedEfforts = meta.SupportedEfforts?.Select(e => e.ToString()).ToArray(),
+                    DefaultEffort = meta.SupportedEfforts is null ? null : ModelRegistry.DefaultEffortFor(meta.ModelId).ToString(),
                     CostTier = costTier,
                     DataSharingProgram = dataSharing,
                     UsageNote = note,

@@ -185,7 +185,7 @@ Open WebUI等のOpenAI互換クライアントから、Discordと同じモデル
   プロンプト、最後のuserが今回の入力、それより前が履歴。コンテキスト上限を超える分は古い履歴から削る
 - `stream`の有無両対応。ストリームではローカルのreasoningモデルの思考を`reasoning_content`として中継し、
   思考中に本文を流さないモデル（Vertex経由のGemini等）のために15秒ごとにSSEのコメント行を送って接続を保つ
-- `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はMedium
+- `reasoning_effort`（none/minimal/low/medium/high/xhigh）をeffortに対応させる。未指定はモデルごとの既定(Medium。Qwen3.8はLow)。`temperature`未指定はクラウド0.7、ローカルはllama-swap側の推奨値
 - 画像は今回の入力のみ、data URI（base64）のみ受け付ける（外部URLは取りに行かない）。Discordの添付と同じ
   サイズ・解像度制限と長辺1024pxへの縮小を通す。履歴中の画像は`[画像]`という文字に置き換える
 - 出力上限で切れた等の場合はMCPの`ask`と同じ注記を本文末尾に付ける。ツール呼び出し（function calling）は非対応

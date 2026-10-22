@@ -141,7 +141,7 @@ namespace DiscordAIBot
                 Contents: contents,
                 SystemInstruction: systemInstruction,
                 GenerationConfig: new GeminiGenerationConfigDto(
-                    Temperature: request.Temperature,
+                    Temperature: request.Temperature ?? AiRequest.DefaultTemperature,
                     MaxOutputTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : 8192,
                     ThinkingConfig: new GeminiThinkingConfigDto(ThinkingLevel: thinkingLevel)
                 )

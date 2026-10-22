@@ -109,7 +109,7 @@ namespace DiscordAIBot
             [Description("使用するモデルID(省略時はローカルの既定モデル)。/modelで選択可能なIDと同じ値(例: gemini-3.8-flash, xai/grok-4.7, gpt-6.1-sol)")] string? model = null,
             [Description("短期セッションID(任意の文字列)。同じIDを指定して続けて呼ぶと会話が継続する。省略時は毎回独立したリクエスト")] string? session_id = null,
             [Description("思考の深さ。省略時はMedium。選択肢: None, Low, Medium, High, XHigh(モデルが非対応の場合は自動調整される)")] string? effort = null,
-            [Description("生成のランダム性(0.0〜2.0程度)。省略時は0.7。OpenAIモデルではAPI仕様上デフォルト値のみ受理されるため無視される")] double? temperature = null)
+            [Description("生成のランダム性(0.0〜2.0程度)。省略時はクラウドモデルは0.7、ローカルモデルはモデルごとの推奨値。OpenAIモデルではAPI仕様上デフォルト値のみ受理されるため無視される")] double? temperature = null)
         {
             var callStopwatch = Stopwatch.StartNew();
             string callerIp = _httpContextAccessor.HttpContext?.Connection?.RemoteIpAddress?.ToString() ?? "unknown";
@@ -135,14 +135,12 @@ namespace DiscordAIBot
                 throw new McpException($"未知のモデルIDです: '{modelId}'。有効な値: {validIds}");
             }
 
-            EffortLevel effortLevel = EffortLevel.Medium;
+            EffortLevel effortLevel = ModelRegistry.DefaultEffortFor(modelMeta.ModelId);
             if (!string.IsNullOrWhiteSpace(effort) && !Enum.TryParse(effort, ignoreCase: true, out effortLevel))
             {
                 string validEfforts = string.Join(", ", Enum.GetNames(typeof(EffortLevel)));
                 throw new McpException($"未知のeffortです: '{effort}'。有効な値: {validEfforts}");
             }
-
-            double resolvedTemperature = temperature ?? 0.7;
 
             IReadOnlyList<ChatTurn> history = string.IsNullOrWhiteSpace(session_id)
                 ? Array.Empty<ChatTurn>()
@@ -183,7 +181,7 @@ namespace DiscordAIBot
                 History: history,
                 CurrentUserText: prompt,
                 CurrentImagesBase64: Array.Empty<string>(),
-                Temperature: resolvedTemperature,
+                Temperature: temperature,
                 MaxOutputTokens: modelMeta.MaxOutputTokens,
                 Effort: effortLevel
             );

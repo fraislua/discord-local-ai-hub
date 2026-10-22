@@ -73,7 +73,7 @@ namespace DiscordAIBot
             var requestBodyObj = new GrokRequestDto(
                 Model: request.ModelId,
                 Messages: messages,
-                Temperature: request.Temperature,
+                Temperature: request.Temperature ?? AiRequest.DefaultTemperature,
                 MaxTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : -1,
                 Stream: true,
                 ReasoningEffort: reasoningEffort

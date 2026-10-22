@@ -423,7 +423,8 @@ namespace DiscordAIBot
                 used += historyTokens[keepFrom];
             }
 
-            double temperature = body["temperature"]?.GetValue<double>() ?? 0.7;
+            // 未指定(null)ならクラウドは0.7、ローカルはllama-swap側のモデルごとの推奨値(082)
+            double? temperature = body["temperature"]?.GetValue<double>();
 
             var request = new AiRequest(
                 SystemPrompt: systemPrompt,
@@ -433,7 +434,7 @@ namespace DiscordAIBot
                 CurrentImagesBase64: images,
                 Temperature: temperature,
                 MaxOutputTokens: modelMeta.MaxOutputTokens,
-                Effort: ParseEffort(body["reasoning_effort"]?.GetValue<string>())
+                Effort: ParseEffort(body["reasoning_effort"]?.GetValue<string>()) ?? ModelRegistry.DefaultEffortFor(modelMeta.ModelId)
             );
             return (request, used - images.Count * ImageTokenBudget, keepFrom);
         }
@@ -504,11 +505,12 @@ namespace DiscordAIBot
             }
         }
 
-        // OpenAIのreasoning_effort表記をEffortLevelに対応させる。未指定はDiscord・MCPと同じMedium。
+        // OpenAIのreasoning_effort表記をEffortLevelに対応させる。未指定はnull(呼び出し側でDiscord・MCPと
+        // 同じくモデルごとの既定にする)。
         // モデルが対応しない段階は各Provider(OpenAIはModelRegistry.ClampEffort)が丸める
-        private static EffortLevel ParseEffort(string? value) => value?.ToLowerInvariant() switch
+        private static EffortLevel? ParseEffort(string? value) => value?.ToLowerInvariant() switch
         {
-            null or "" => EffortLevel.Medium,
+            null or "" => null,
             "none" or "minimal" => EffortLevel.None,
             "low" => EffortLevel.Low,
             "medium" => EffortLevel.Medium,

@@ -15,7 +15,8 @@ namespace DiscordAIBot
         }
     }
 
-    // クラウドモデルの思考(reasoning)の深さ。ローカルモデル(LmStudioProvider)は無視する。
+    // 思考(reasoning)の深さ。ローカルモデルはSupportedEffortsを持つもの(Qwen3.8)にだけ渡し、
+    // それ以外のローカルモデルでは無視する(082)。
     // 実際に対応する段階数はモデルごとに異なる(ModelRegistry.SupportedEffortsで定義)。
     // 対応しない段階が指定された場合、各Providerが自身の対応範囲にクランプする
     // (例: Gemini/GrokはXHighに非対応のためHighにクランプ)
@@ -36,10 +37,15 @@ namespace DiscordAIBot
         IReadOnlyList<ChatTurn> History,
         string CurrentUserText,
         IReadOnlyList<string> CurrentImagesBase64,
-        double Temperature,
+        // nullは「指定なし」。ローカルモデルには送らずllama-swap側のモデルごとの推奨値に任せ、
+        // クラウドモデルはDefaultTemperatureを使う(082)
+        double? Temperature,
         int MaxOutputTokens,
         EffortLevel Effort = EffortLevel.Medium
-    );
+    )
+    {
+        public const double DefaultTemperature = 0.7;
+    }
 
     // 履歴用のロールとコンテンツ
     public record ChatTurn(string Role, string Content);

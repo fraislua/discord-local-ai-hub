@@ -423,7 +423,7 @@ namespace DiscordAIBot
         {
             EffortLevel.None => ("None", "No reasoning, fastest & cheapest (supported models only)"),
             EffortLevel.Low => ("Low", "Prioritizes speed. Good for everyday chat"),
-            EffortLevel.Medium => ("Medium (Default)", "Balanced"),
+            EffortLevel.Medium => ("Medium", "Balanced"),
             EffortLevel.High => ("High", "For complex problems. Takes longer"),
             EffortLevel.XHigh => ("XHigh", "For very complex problems. Significantly higher latency & cost (supported models only)"),
             _ => (level.ToString(), "")
@@ -453,6 +453,13 @@ namespace DiscordAIBot
                     : ModelRegistry.DefaultModelId;
                 var currentModel = ModelRegistry.AvailableModels[currentModelId];
 
+                // 段階を変えられないローカルモデルは、選んでも効かないのでメニューを出さない(082)
+                if (currentModel.Provider == ApiProvider.LmStudio && currentModel.SupportedEfforts is null)
+                {
+                    await command.RespondAsync($"ℹ️ `{currentModel.DisplayName}`は思考の深さを変えられません。");
+                    return;
+                }
+
                 // モデルごとに実際に対応するエフォート段階だけを表示する(未指定モデルは
                 // 従来通りLow/Medium/Highの3段階にフォールバック)
                 IReadOnlyList<EffortLevel> supportedEfforts = currentModel.SupportedEfforts
@@ -462,14 +469,16 @@ namespace DiscordAIBot
                     .WithPlaceholder("エフォートを選択してください")
                     .WithCustomId("effort_select_menu");
 
+                EffortLevel defaultEffort = ModelRegistry.DefaultEffortFor(currentModelId);
                 foreach (var level in supportedEfforts)
                 {
                     var (label, description) = GetEffortDisplay(level);
+                    if (level == defaultEffort) label += " (Default)";
                     menuBuilder.AddOption(label, level.ToString(), description);
                 }
 
                 var builder = new ComponentBuilder().WithSelectMenu(menuBuilder);
-                await command.RespondAsync($"👇 `{currentModel.DisplayName}`のエフォートを選択してください（この場所での会話に適用されます。ローカルモデルには影響しません）:", components: builder.Build());
+                await command.RespondAsync($"👇 `{currentModel.DisplayName}`のエフォートを選択してください（この場所での会話に適用されます）:", components: builder.Build());
             }
             else if (command.Data.Name == "prompt")
             {
@@ -683,7 +692,7 @@ namespace DiscordAIBot
 
             var targetModel = ModelRegistry.AvailableModels[targetModelId];
 
-            EffortLevel effort = _channelEfforts.TryGetValue(contextId, out var customEffort) ? customEffort : EffortLevel.Medium;
+            EffortLevel effort = _channelEfforts.TryGetValue(contextId, out var customEffort) ? customEffort : ModelRegistry.DefaultEffortFor(targetModel.ModelId);
 
             string promptId = _channelPrompts.TryGetValue(contextId, out var customPromptId) && SystemPromptRegistry.AvailablePrompts.ContainsKey(customPromptId)
                 ? customPromptId

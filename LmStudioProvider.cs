@@ -71,12 +71,34 @@ namespace DiscordAIBot
                 messages.Add(new LmMessageDto("user", request.CurrentUserText));
             }
 
+            // 思考の段階はSupportedEffortsを持つモデル(Qwen3.8)にだけ送る。llama-swap側のテンプレートが
+            // low/medium/xhighを受け、Noneはenable_thinking:falseで思考を止める。それ以外のローカル
+            // モデルには何も送らず、llama-swap側の既定のままにする(082)
+            string? reasoningEffort = null;
+            Dictionary<string, object>? chatTemplateKwargs = null;
+            if (ModelRegistry.AvailableModels.TryGetValue(request.ModelId, out var meta) && meta.SupportedEfforts is { Count: > 0 })
+            {
+                var level = ModelRegistry.ClampEffort(request.ModelId, request.Effort);
+                if (level == EffortLevel.None)
+                {
+                    chatTemplateKwargs = new Dictionary<string, object> { ["enable_thinking"] = false };
+                }
+                else
+                {
+                    reasoningEffort = level.ToString().ToLowerInvariant();
+                }
+            }
+
+            // temperatureは指定があったときだけ送る(null は_jsonOptionsで省かれる)。未指定なら
+            // llama-swap側のモデルごとの推奨値が効く(082)
             var requestBodyObj = new LmRequestDto(
                 Model: request.ModelId,
                 Messages: messages,
                 Temperature: request.Temperature,
                 MaxTokens: request.MaxOutputTokens > 0 ? request.MaxOutputTokens : -1,
-                Stream: true
+                Stream: true,
+                ReasoningEffort: reasoningEffort,
+                ChatTemplateKwargs: chatTemplateKwargs
             );
 
             var waitStart = DateTime.UtcNow;
@@ -185,9 +207,11 @@ namespace DiscordAIBot
         private record LmRequestDto(
             [property: JsonPropertyName("model")] string Model,
             [property: JsonPropertyName("messages")] IReadOnlyList<LmMessageDto> Messages,
-            [property: JsonPropertyName("temperature")] double Temperature,
+            [property: JsonPropertyName("temperature")] double? Temperature,
             [property: JsonPropertyName("max_tokens")] int MaxTokens,
-            [property: JsonPropertyName("stream")] bool Stream
+            [property: JsonPropertyName("stream")] bool Stream,
+            [property: JsonPropertyName("reasoning_effort")] string? ReasoningEffort = null,
+            [property: JsonPropertyName("chat_template_kwargs")] Dictionary<string, object>? ChatTemplateKwargs = null
         );
 
         private record LmMessageDto(

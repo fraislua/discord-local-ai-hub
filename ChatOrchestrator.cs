@@ -98,7 +98,8 @@ namespace DiscordAIBot
                 History: history,
                 CurrentUserText: userTextForAi,
                 CurrentImagesBase64: base64Images,
-                Temperature: 0.7,
+                // 指定なし: クラウドは0.7、ローカルはllama-swap側のモデルごとの推奨値(082)
+                Temperature: null,
                 MaxOutputTokens: modelMeta.MaxOutputTokens,
                 Effort: effort
             );
